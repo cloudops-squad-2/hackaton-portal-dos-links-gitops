@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: portal-dos-links
+
+resources:
+  - api
+  - frontend
+  - database
+  - observability
+
+images:
+  - name: ghcr.io/cloudops-squad-2/portal-dos-links-api
+    newTag: latest
+  - name: ghcr.io/cloudops-squad-2/portal-dos-links-frontend
+    newTag: latest
