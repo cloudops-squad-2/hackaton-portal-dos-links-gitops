@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portal-api
+  namespace: portal-dos-links
+  labels:
+    app: portal-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: portal-api
+  template:
+    metadata:
+      labels:
+        app: portal-api
+    spec:
+      containers:
+        - name: portal-api
+          image: ghcr.io/portal-dos-links/portal-api
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: api-config
+            - secretRef:
+                name: api-secret
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
