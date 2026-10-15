@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: portal-frontend
-          image: ghcr.io/portal-dos-links/portal-frontend
+          image: ghcr.io/cloudops-squad-2/portal-dos-links-frontend
           ports:
             - containerPort: 3000
           envFrom:
@@ -33,14 +33,14 @@ spec:
           livenessProbe:
             httpGet:
               path: /
-              port: 3000
+              port: 80
             initialDelaySeconds: 15
             periodSeconds: 10
             failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /
-              port: 3000
+              port: 80
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 3

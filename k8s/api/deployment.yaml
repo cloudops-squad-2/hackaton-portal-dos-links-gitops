@@ -17,9 +17,9 @@ spec:
     spec:
       containers:
         - name: portal-api
-          image: ghcr.io/portal-dos-links/portal-api
+          image: ghcr.io/cloudops-squad-2/portal-dos-links-api
           ports:
-            - containerPort: 8080
+            - containerPort: 3000
           envFrom:
             - configMapRef:
                 name: api-config
@@ -34,15 +34,15 @@ spec:
               memory: 256Mi
           livenessProbe:
             httpGet:
-              path: /healthz
-              port: 8080
+              path: /api/health
+              port: 3000
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /readyz
-              port: 8080
+              path: /api/health
+              port: 3000
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 3

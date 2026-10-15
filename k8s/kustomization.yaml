@@ -7,10 +7,10 @@ resources:
   - api
   - frontend
   - database
-  - observability
+# - observability
 
 images:
   - name: ghcr.io/cloudops-squad-2/portal-dos-links-api
-    newTag: latest
+    newTag: "756c6d6"
   - name: ghcr.io/cloudops-squad-2/portal-dos-links-frontend
-    newTag: latest
+    newTag: "756c6d6"
