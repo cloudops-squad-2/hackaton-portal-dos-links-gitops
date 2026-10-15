@@ -1,0 +1,23 @@
+# Kustomize rendered output
+rendered.yaml
+
+# Kubeconform / kustomize binaries if downloaded locally
+kustomize
+kubeconform
+kustomize.exe
+kubeconform.exe
+kustomize.tar.gz
+kubeconform.zip
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Secrets (never commit real values)
+*.env
+.env*
+**/secret.yaml

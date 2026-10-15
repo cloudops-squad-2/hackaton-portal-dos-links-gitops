@@ -17,18 +17,18 @@ spec:
               service:
                 name: portal-api-svc
                 port:
-                  number: 8080
+                  number: 3000
           - path: /s(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
                 name: portal-api-svc
                 port:
-                  number: 8080
+                  number: 3000
           - path: /
             pathType: Prefix
             backend:
               service:
                 name: portal-frontend-svc
                 port:
-                  number: 3000
+                  number: 80

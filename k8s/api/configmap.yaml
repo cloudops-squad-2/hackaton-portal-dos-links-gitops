@@ -5,6 +5,3 @@ metadata:
   namespace: portal-dos-links
 data:
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
-  DATABASE_HOST: "postgres-svc"
-  DATABASE_PORT: "5432"
-  DATABASE_NAME: "portal_db"
