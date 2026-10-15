@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: portal-dos-links
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/cloudops-squad-2/hackaton-portal-dos-links-gitops.git
+    targetRevision: main
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: portal-dos-links
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
