@@ -7,7 +7,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/cloudops-squad-2/hackaton-portal-dos-links-gitops.git
-    targetRevision: main
+    targetRevision: develop
     path: k8s
   destination:
     server: https://kubernetes.default.svc
