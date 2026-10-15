@@ -5,58 +5,77 @@
 This repository is the **source of truth** for the Kubernetes cluster that runs the Portal dos Links hackathon project. It contains no application source code — only the infrastructure configuration that ArgoCD watches and reconciles against the cluster.
 
 The application is a creative link-shortener with three runtime components:
-- **frontend** — UI to create and list shortened links
-- **api** — shortening logic and redirect handler
-- **database** — PostgreSQL that maps short codes → original URLs
+- **frontend** — nginx serving a static build, port 80
+- **api** — NestJS shortening logic and redirect handler, port 3000
+- **database** — PostgreSQL that maps short codes → original URLs, port 5432
 
-Every component is instrumented with OpenTelemetry. Grafana dashboards surface clicks, latency, and errors in real time.
+Images are published to `ghcr.io/cloudops-squad-2/` by the application repo CI pipeline.
 
 ---
 
 ## Requirements
 
-### R1 — Kubernetes Manifests (per component)
+### R1 — Kubernetes Manifests (per component) ✅
 
-Each of the three components (`frontend`, `api`, `database`) must have a complete set of Kubernetes manifests inside `k8s/<component>/`:
+Each of the three components (`frontend`, `api`, `database`) has a complete set of Kubernetes manifests inside `k8s/<component>/`:
 
-- **R1.1** `Deployment` with:
-  - Image tag sourced from a `kustomize` image override (so CI only needs to bump a tag, not edit YAML)
+- **R1.1** ✅ `Deployment` with:
+  - Image tag sourced from a `kustomize` image override
   - Resource requests and limits set
-  - `livenessProbe` and `readinessProbe` configured
-  - Environment variables injected from `ConfigMap` and `Secret` refs (never hardcoded values)
-- **R1.2** `Service` exposing the correct port(s)
-- **R1.3** `ConfigMap` for non-sensitive configuration (e.g., API base URL, OTEL collector endpoint)
-- **R1.4** `Secret` (sealed or placeholder) for sensitive data (e.g., DB credentials, connection strings)
-- **R1.5** For the **database** only: a `PersistentVolumeClaim` to persist data across pod restarts
+  - `livenessProbe` and `readinessProbe` configured with correct ports and paths
+  - Environment variables injected from `ConfigMap` and `Secret` refs
+- **R1.2** ✅ `Service` exposing the correct port(s)
+- **R1.3** ✅ `ConfigMap` for non-sensitive configuration
+- **R1.4** ✅ `Secret` for sensitive data — gitignored, applied manually via `kubectl apply`
+- **R1.5** ✅ `PersistentVolumeClaim` for the database (1Gi ReadWriteOnce)
 
-### R2 — Kustomize Root
+**Known ports (validated against running pods):**
+- API: port `3000`, probes at `GET /api/health`
+- Frontend: port `80`, probes at `GET /`
+- Database: port `5432`, probes via `pg_isready`
 
-- **R2.1** `k8s/kustomization.yaml` must reference all three component directories as resources
-- **R2.2** The root kustomization must expose `images:` overrides for all three components so automated tag bumps are a single-field change
-- **R2.3** A `namespace` field must be declared so all resources land in a dedicated namespace (`portal-dos-links`)
+### R2 — Kustomize Root ✅
 
-### R3 — ArgoCD Application
+- **R2.1** ✅ `k8s/kustomization.yaml` references `api`, `frontend`, `database` directories
+- **R2.2** ✅ `images:` override block for both app images — tag pinned to current SHA `756c6d6`
+- **R2.3** ✅ `namespace: portal-dos-links` declared at root
+- **R2.4** ⏳ `observability` directory commented out — to be enabled after Task 5
 
-- **R3.1** `argocd/application.yaml` must define an ArgoCD `Application` resource pointing at this repo and the `k8s/` path
-- **R3.2** Sync policy must be **automated** with `prune: true` and `selfHeal: true` so the cluster self-corrects on drift
-- **R3.3** The Application must target the correct destination namespace (`portal-dos-links`) and cluster (`in-cluster`)
-- **R3.4** `syncOptions` must include `CreateNamespace=true` so the namespace is auto-created on first sync
+### R3 — ArgoCD Application ✅
 
-### R4 — Observability Stack Configuration
+- **R3.1** ✅ `argocd/application.yaml` defines an ArgoCD `Application` pointing at `k8s/` path
+- **R3.2** ✅ Sync policy: automated, `prune: true`, `selfHeal: true`
+- **R3.3** ✅ Destination: `https://kubernetes.default.svc`, namespace `portal-dos-links`
+- **R3.4** ✅ `syncOptions: [CreateNamespace=true]`
+- **R3.5** ⚠️ Requires manifests to be on `main` branch — ArgoCD reads from Git, not local files
 
-- **R4.1** A `k8s/observability/` directory must contain manifests (or Kustomize component) for:
-  - OpenTelemetry Collector (`Deployment` + `Service` + `ConfigMap` with pipeline: OTLP receiver → Jaeger/Tempo exporter + Prometheus exporter)
-  - Grafana `ConfigMap` for a pre-built dashboard JSON (clicks counter, p99 latency, error rate panels)
-- **R4.2** The root kustomization must include the `observability` directory
-- **R4.3** The OTEL collector endpoint must be the value stored in the `ConfigMap` referenced by `api` and `frontend` deployments (single source of truth, no duplication)
+### R4 — Observability Stack Configuration ⏳
 
-### R5 — Ingress / Networking
+- **R4.1** ⏳ `k8s/observability/` directory with:
+  - OpenTelemetry Collector (`Deployment` + `Service` + `ConfigMap`)
+  - Grafana dashboard `ConfigMap`
+- **R4.2** ⏳ Root kustomization to include `observability` once ready
+- **R4.3** ✅ OTEL collector endpoint already set in API `ConfigMap` (`http://otel-collector:4317`)
 
-- **R5.1** An `Ingress` (or `HTTPRoute` if using Gateway API) for the frontend and API services, using a hostname configurable via Kustomize patches
-- **R5.2** The redirect endpoint (`GET /:code`) on the API must be reachable directly — no auth middleware in the path
+### R5 — Ingress / Networking ✅
+
+- **R5.1** ✅ nginx `Ingress` in `k8s/frontend/ingress.yaml` with path-based routing:
+  - `/api` → `portal-api-svc:3000`
+  - `/s` → `portal-api-svc:3000`
+  - `/` → `portal-frontend-svc:80`
+- **R5.2** ✅ Redirect endpoint (`GET /:code`) reachable via `/s` prefix
 
 ### R6 — Repo Hygiene
 
-- **R6.1** A root `README.md` must explain: project identity/mascot, folder structure, how to bootstrap ArgoCD, how to trigger a deploy, and how the Kiro copilot was used
-- **R6.2** Secrets must never be committed in plaintext — use `stringData` placeholders marked `# REPLACE_ME` or integrate Sealed Secrets
-- **R6.3** All YAML files must pass `kubectl --dry-run=client` or `kustomize build | kubeval` without errors
+- **R6.1** ⏳ `README.md` not yet written
+- **R6.2** ✅ `**/secret.yaml` gitignored — secrets applied manually, never committed
+- **R6.3** ✅ CI pipeline validates `kustomize build | kubeconform` on every push/PR
+- **R6.4** ✅ Gitleaks scans for accidentally committed secrets on every push/PR
+- **R6.5** ⏳ `rendered.yaml` should be gitignored — currently present at repo root
+
+### R7 — CI Validation Pipeline ✅
+
+- **R7.1** ✅ `.github/workflows/ci.yaml` runs on push to `main`/`develop` and on PRs
+- **R7.2** ✅ Gitleaks secret scanning
+- **R7.3** ✅ `kustomize build k8s/` renders full manifest
+- **R7.4** ✅ `kubeconform -strict` validates against Kubernetes schemas
