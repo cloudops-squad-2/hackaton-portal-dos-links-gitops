@@ -3,23 +3,21 @@ kind: Ingress
 metadata:
   name: portal-api-ingress
   namespace: portal-dos-links
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
 spec:
   ingressClassName: nginx
   rules:
     - host: portal.localdev
       http:
         paths:
-          - path: /api(/|$)(.*)
-            pathType: ImplementationSpecific
+          - path: /api
+            pathType: Prefix
             backend:
               service:
                 name: portal-api-svc
                 port:
                   number: 3000
-          - path: /s(/|$)(.*)
-            pathType: ImplementationSpecific
+          - path: /s
+            pathType: Prefix
             backend:
               service:
                 name: portal-api-svc
