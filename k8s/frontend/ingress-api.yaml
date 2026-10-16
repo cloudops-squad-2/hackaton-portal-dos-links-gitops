@@ -1,7 +1,7 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: portal-ingress
+  name: portal-api-ingress
   namespace: portal-dos-links
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /$2
@@ -25,10 +25,3 @@ spec:
                 name: portal-api-svc
                 port:
                   number: 3000
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: portal-frontend-svc
-                port:
-                  number: 80
