@@ -5,6 +5,11 @@ metadata:
   namespace: portal-dos-links
   labels:
     app: portal-api
+  annotations:
+    # Wave 0: Postgres, PVC, Services
+    # Wave 1: prisma-migrate Job (Sync hook)
+    # Wave 2: this Deployment, so the API starts only after migrations finish.
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   # replicas: NOT SET — managed by HPA (k8s/api/hpa.yaml).
   # Setting replicas here would conflict with selfHeal: true in ArgoCD.
@@ -37,16 +42,9 @@ spec:
       # 30s gives the preStop hook (5s sleep) + NestJS graceful shutdown time.
       terminationGracePeriodSeconds: 30
 
-      initContainers:
-        - name: prisma-migrate
-          image: ghcr.io/cloudops-squad-2/portal-dos-links-api
-          command: ["sh", "-c", "npx prisma migrate deploy --schema=prisma/schema.prisma"]
-          env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: api-secret
-                  key: DATABASE_URL
+      # NOTE: the prisma-migrate initContainer was removed.
+      # Migrations now run once per sync via k8s/database/migration-job.yaml.
+
       containers:
         - name: portal-api
           image: ghcr.io/cloudops-squad-2/portal-dos-links-api
