@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: portal-otlp-ingress
+  namespace: portal-dos-links
+  annotations:
+    # Rate limiting: protect the unauthenticated public endpoint.
+    # The browser OTel SDK sends spans here without any auth token.
+    # Residual risk: synthetic spans can be injected. Accepted for hackathon scope.
+    # Production hardening: add mTLS or an auth sidecar in front of the Collector.
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    # No rewrite-target: the full path /otlp/v1/traces reaches the Collector.
+    # The Collector HTTP receiver matches it via traces_url_path: /otlp/v1/traces.
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: portal.localdev
+      http:
+        paths:
+          - path: /otlp
+            pathType: Prefix
+            backend:
+              service:
+                name: otel-collector
+                port:
+                  number: 4318

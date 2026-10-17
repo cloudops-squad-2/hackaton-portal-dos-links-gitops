@@ -1,0 +1,66 @@
+# Grafana Tempo values — single-binary, local cluster / hackathon profile
+# Chart: grafana-community/tempo 3.2.0 / appVersion 3.1.0
+# Release name: "tempo" → Service: tempo.observability.svc.cluster.local
+# The OTel Collector exports traces to this Service on port 4317 (gRPC).
+
+tempo:
+  # -- Resource limits sized for local cluster.
+  # Increase limits for production workloads.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # -- Trace retention (local storage).
+  # 48h is sufficient for the hackathon demo; increase for production.
+  retention: 48h
+
+  # -- Receivers: only OTLP (gRPC + HTTP). Jaeger disabled (not used).
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+
+  # -- Storage: local disk (single-binary default).
+  # For production, switch backend to s3 or gcs.
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal
+
+  # -- Security context (non-root).
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false   # tempo writes to /var/tempo
+    capabilities:
+      drop:
+        - ALL
+
+# -- Persistence: 10Gi PVC for trace blocks.
+# Without persistence, traces are lost on pod restart.
+persistence:
+  enabled: true
+  size: 10Gi
+  accessModes:
+    - ReadWriteOnce
+
+# -- Service: ClusterIP (never exposed via public Ingress).
+service:
+  type: ClusterIP
+  annotations: {}
+
+# -- ServiceMonitor: disabled here; the portal app's ServiceMonitor covers
+# the OTel Collector metrics. Enable if you want Tempo self-metrics in Prometheus.
+serviceMonitor:
+  enabled: false

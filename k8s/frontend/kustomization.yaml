@@ -6,3 +6,6 @@ resources:
   - service.yaml
   - ingress-api.yaml
   - ingress-frontend.yaml
+  - ingress-otlp.yaml
+  - hpa.yaml
+  - pdb.yaml

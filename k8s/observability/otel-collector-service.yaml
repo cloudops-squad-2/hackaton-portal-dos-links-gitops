@@ -14,7 +14,19 @@ spec:
       port: 4317
       targetPort: 4317
       protocol: TCP
-    - name: prometheus
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+    - name: prom-metrics
       port: 8889
       targetPort: 8889
+      protocol: TCP
+    - name: self-metrics
+      port: 8888
+      targetPort: 8888
+      protocol: TCP
+    - name: health
+      port: 13133
+      targetPort: 13133
       protocol: TCP

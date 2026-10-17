@@ -4,4 +4,29 @@ metadata:
   name: api-config
   namespace: portal-dos-links
 data:
+  # ── OTel Endpoint ────────────────────────────────────────────────────────────
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+
+  # ── OTel Identity ────────────────────────────────────────────────────────────
+  OTEL_SERVICE_NAME: "portal-dos-links-api"
+
+  # ── Sampling: 10% (parentbased_traceidratio) ─────────────────────────────────
+  # Respects parent span's sampling decision. Adjust ARG for higher/lower traffic.
+  OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+  OTEL_TRACES_SAMPLER_ARG: "0.1"
+
+  # ── Metrics export interval (ms) ─────────────────────────────────────────────
+  # This value is read explicitly by the API's tracing.ts.
+  # Dashboard and alert rate windows must be >= 4x this value (>= 2 min).
+  OTEL_METRIC_EXPORT_INTERVAL: "30000"
+
+  # ── Semconv: stable HTTP metric names ────────────────────────────────────────
+  # Produces: http_server_request_duration_seconds_* (not the legacy http_server_duration_*)
+  # Must match the dashboard and alert expressions.
+  # Must also be set identically in the app repo's docker-compose for local dev.
+  OTEL_SEMCONV_STABILITY_OPT_IN: "http"
+
+  # ── Connection pool ──────────────────────────────────────────────────────────
+  # Constraint: maxReplicas (6) × PG_POOL_MAX (10) = 60 <= 80% × 100 (pg default) = 80
+  # If max_connections is changed in postgres, recalculate this value.
+  PG_POOL_MAX: "10"

@@ -1,0 +1,118 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: portal-dos-links-alerts
+  namespace: portal-dos-links
+  labels:
+    # kube-prometheus-stack discovers rules via this selector when
+    # ruleSelectorNilUsesHelmValues: false (configured in stack values).
+    app: portal-dos-links
+spec:
+  groups:
+    - name: portal-dos-links.http
+      # VERIFICATION NOTE: metric names below assume OTEL_SEMCONV_STABILITY_OPT_IN=http.
+      # With this setting the OTel Node.js SDK exports:
+      #   http_server_request_duration_seconds_bucket/_count/_sum
+      #   http_response_status_code label (not http_status_code)
+      # Verify from: kubectl exec -n portal-dos-links deploy/otel-collector --
+      #   wget -qO- http://localhost:8889/metrics | grep '^# TYPE http'
+      # Adjust metric and label names if they differ before marking T9 done.
+      rules:
+        - alert: APIHighErrorRate
+          expr: |
+            (
+              sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[2m]))
+              /
+              sum(rate(http_server_request_duration_seconds_count[2m]))
+            ) > 0.02
+          for: 5m
+          labels:
+            severity: warning
+            team: portal-dos-links
+          annotations:
+            summary: "API error rate above 2%"
+            description: "More than 2% of API responses are 5xx for the last 5 minutes."
+
+        - alert: APIHighLatency
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum(rate(http_server_request_duration_seconds_bucket[2m])) by (le)
+            ) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+            team: portal-dos-links
+          annotations:
+            summary: "API p99 latency above 500ms"
+            description: "p99 request latency has been above 500ms for 10 minutes."
+
+    - name: portal-dos-links.availability
+      rules:
+        - alert: APIPodsNotReady
+          expr: |
+            kube_deployment_status_replicas_unavailable{
+              namespace="portal-dos-links",
+              deployment="portal-api"
+            } > 0
+          for: 5m
+          labels:
+            severity: critical
+            team: portal-dos-links
+          annotations:
+            summary: "API pods unavailable"
+            description: "{{ $value }} portal-api pod(s) have been unavailable for 5 minutes."
+
+        - alert: FrontendPodsNotReady
+          expr: |
+            kube_deployment_status_replicas_unavailable{
+              namespace="portal-dos-links",
+              deployment="portal-frontend"
+            } > 0
+          for: 5m
+          labels:
+            severity: warning
+            team: portal-dos-links
+          annotations:
+            summary: "Frontend pods unavailable"
+            description: "{{ $value }} portal-frontend pod(s) have been unavailable for 5 minutes."
+
+        - alert: HPAAtMaxReplicas
+          expr: |
+            kube_horizontalpodautoscaler_status_current_replicas{namespace="portal-dos-links"}
+            ==
+            kube_horizontalpodautoscaler_spec_max_replicas{namespace="portal-dos-links"}
+          for: 15m
+          labels:
+            severity: warning
+            team: portal-dos-links
+          annotations:
+            summary: "HPA at maximum replicas"
+            description: "{{ $labels.horizontalpodautoscaler }} has been at its maximum replica count for 15 minutes. Consider increasing maxReplicas."
+
+    - name: portal-dos-links.telemetry
+      # These alerts fire when the observability pipeline itself has problems.
+      # They use otelcol_* metrics from the Collector's self-telemetry (:8888).
+      # VERIFICATION NOTE: confirm metric names from
+      #   kubectl exec -n portal-dos-links deploy/otel-collector --
+      #     wget -qO- http://localhost:8888/metrics | grep '^# TYPE otelcol_exporter'
+      rules:
+        - alert: CollectorExportFailures
+          expr: |
+            increase(otelcol_exporter_send_failed_spans_total[5m]) > 0
+          labels:
+            severity: warning
+            team: portal-dos-links
+          annotations:
+            summary: "OTel Collector failing to export spans"
+            description: "The OTel Collector has failed to export {{ $value }} spans in the last 5 minutes. Check Tempo availability."
+
+        - alert: CollectorProcessorDropped
+          expr: |
+            increase(otelcol_processor_refused_spans_total[5m]) > 0
+          labels:
+            severity: warning
+            team: portal-dos-links
+          annotations:
+            summary: "OTel Collector dropping spans"
+            description: "The memory_limiter processor has dropped {{ $value }} spans in the last 5 minutes. Consider increasing Collector memory limits."
