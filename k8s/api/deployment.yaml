@@ -37,6 +37,16 @@ spec:
       # 30s gives the preStop hook (5s sleep) + NestJS graceful shutdown time.
       terminationGracePeriodSeconds: 30
 
+      initContainers:
+        - name: prisma-migrate
+          image: ghcr.io/cloudops-squad-2/portal-dos-links-api
+          command: ["sh", "-c", "npx prisma migrate deploy --schema=prisma/schema.prisma"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: api-secret
+                  key: DATABASE_URL
       containers:
         - name: portal-api
           image: ghcr.io/cloudops-squad-2/portal-dos-links-api
