@@ -4,33 +4,49 @@ metadata:
   name: grafana-portal-dashboard
   namespace: portal-dos-links
   labels:
+    # Grafana sidecar discovers ConfigMaps with this label from all namespaces
+    # (configured via searchNamespace: ALL in kube-prometheus-stack values).
     grafana_dashboard: "1"
 data:
   portal-dos-links-dashboard.json: |
     {
       "uid": "portal-dos-links",
       "title": "Portal dos Links",
-      "schemaVersion": 36,
-      "version": 1,
+      "schemaVersion": 38,
+      "version": 3,
       "refresh": "30s",
       "time": { "from": "now-1h", "to": "now" },
+      "templating": {
+        "list": [
+          {
+            "name": "datasource",
+            "type": "datasource",
+            "pluginId": "prometheus",
+            "label": "Prometheus",
+            "hide": 0,
+            "refresh": 1,
+            "current": {}
+          }
+        ]
+      },
       "panels": [
         {
           "id": 1,
           "type": "timeseries",
-          "title": "Cliques por minuto",
+          "title": "Redirects por segundo (links.redirected)",
+          "description": "Counter links_redirected_total incremented by the API on every successful redirect. Rate window 2m >= 4x the 30s export interval. No /s/ filter needed — the API never sees /s.",
           "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-          "datasource": "Prometheus",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [
             {
-              "expr": "rate(http_server_duration_count{http_route=~\"/s/.*\"}[1m])",
-              "legendFormat": "cliques/min",
+              "expr": "sum(rate(links_redirected_total[2m]))",
+              "legendFormat": "redirects/s",
               "refId": "A"
             }
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "reqps",
+              "unit": "ops",
               "color": { "mode": "palette-classic" }
             }
           }
@@ -38,19 +54,19 @@ data:
         {
           "id": 2,
           "type": "timeseries",
-          "title": "Latencia p99",
+          "title": "Links criados por segundo",
           "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-          "datasource": "Prometheus",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(http_server_duration_bucket[5m])) by (le))",
-              "legendFormat": "p99",
+              "expr": "sum(rate(links_created_total[2m]))",
+              "legendFormat": "criações/s",
               "refId": "A"
             }
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "ms",
+              "unit": "ops",
               "color": { "mode": "palette-classic" }
             }
           }
@@ -58,34 +74,114 @@ data:
         {
           "id": 3,
           "type": "timeseries",
-          "title": "Taxa de erros",
+          "title": "Erros de negócio (expirados / não encontrados / limite de cliques)",
           "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-          "datasource": "Prometheus",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [
             {
-              "expr": "rate(http_server_duration_count{http_status_code=~\"5..\"}[1m])",
-              "legendFormat": "5xx/min",
+              "expr": "sum(rate(links_expired_total[2m]))",
+              "legendFormat": "expirados/s",
               "refId": "A"
+            },
+            {
+              "expr": "sum(rate(links_not_found_total[2m]))",
+              "legendFormat": "não encontrados/s",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(rate(links_click_limit_reached_total[2m]))",
+              "legendFormat": "limite de cliques/s",
+              "refId": "C"
             }
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "reqps",
-              "color": { "mode": "fixed", "fixedColor": "red" }
+              "unit": "ops",
+              "color": { "mode": "palette-classic" }
             }
           }
         },
         {
           "id": 4,
-          "type": "stat",
-          "title": "Servicos saudaveis",
+          "type": "timeseries",
+          "title": "Latência HTTP p50 / p95 / p99 (rota /:code)",
+          "description": "Filtered by http_route='/:code' — the route the API registers for redirects. The Ingress strips /s before the request reaches the API, so the route is always /:code, never /s/:code. Metric name assumes OTEL_SEMCONV_STABILITY_OPT_IN=http. Verify from :8889/metrics.",
           "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-          "datasource": "Prometheus",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [
             {
-              "expr": "sum(kube_pod_status_ready{namespace=\"portal-dos-links\",condition=\"true\"})",
-              "legendFormat": "pods prontos",
+              "expr": "histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket{http_route=\"/:code\"}[2m])) by (le))",
+              "legendFormat": "p50",
               "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{http_route=\"/:code\"}[2m])) by (le))",
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket{http_route=\"/:code\"}[2m])) by (le))",
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Taxa de erros HTTP 5xx (%) — todas as rotas da API",
+          "description": "Ratio of 5xx responses across all API routes. Filtered to service_name=portal-dos-links-api to exclude Collector self-metrics. Metric name assumes OTEL_SEMCONV_STABILITY_OPT_IN=http. Verify http_response_status_code label name from :8889/metrics.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "targets": [
+            {
+              "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\",service_name=\"portal-dos-links-api\"}[2m])) / sum(rate(http_server_request_duration_seconds_count{service_name=\"portal-dos-links-api\"}[2m])) * 100",
+              "legendFormat": "5xx %",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "color": { "mode": "fixed", "fixedColor": "red" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "red", "value": 2 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": 6,
+          "type": "stat",
+          "title": "Pods prontos por Deployment",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "targets": [
+            {
+              "expr": "kube_deployment_status_replicas_ready{namespace=\"portal-dos-links\",deployment=\"portal-api\"}",
+              "legendFormat": "API",
+              "refId": "A"
+            },
+            {
+              "expr": "kube_deployment_status_replicas_ready{namespace=\"portal-dos-links\",deployment=\"portal-frontend\"}",
+              "legendFormat": "Frontend",
+              "refId": "B"
+            },
+            {
+              "expr": "kube_deployment_status_replicas_ready{namespace=\"portal-dos-links\",deployment=\"otel-collector\"}",
+              "legendFormat": "Collector",
+              "refId": "C"
             }
           ],
           "fieldConfig": {
@@ -96,7 +192,7 @@ data:
                 "steps": [
                   { "color": "red", "value": null },
                   { "color": "yellow", "value": 1 },
-                  { "color": "green", "value": 3 }
+                  { "color": "green", "value": 2 }
                 ]
               },
               "color": { "mode": "thresholds" }
@@ -104,9 +200,60 @@ data:
           },
           "options": {
             "reduceOptions": { "calcs": ["lastNotNull"] },
-            "orientation": "auto",
+            "orientation": "horizontal",
             "textMode": "auto",
             "colorMode": "background"
+          }
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "HPA réplicas atuais vs máximo",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "targets": [
+            {
+              "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"portal-dos-links\"}",
+              "legendFormat": "atual — {{horizontalpodautoscaler}}",
+              "refId": "A"
+            },
+            {
+              "expr": "kube_horizontalpodautoscaler_spec_max_replicas{namespace=\"portal-dos-links\"}",
+              "legendFormat": "máximo — {{horizontalpodautoscaler}}",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "id": 8,
+          "type": "timeseries",
+          "title": "Falhas de envio do Collector (otelcol_*)",
+          "description": "Alert CollectorExportFailures fires when this is > 0. Uses self-telemetry from :8888/metrics.",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "targets": [
+            {
+              "expr": "sum(increase(otelcol_exporter_send_failed_spans_total[2m]))",
+              "legendFormat": "spans falhados (2m)",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(increase(otelcol_processor_refused_spans_total[2m]))",
+              "legendFormat": "spans recusados processor (2m)",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": { "mode": "fixed", "fixedColor": "orange" }
+            }
           }
         }
       ]

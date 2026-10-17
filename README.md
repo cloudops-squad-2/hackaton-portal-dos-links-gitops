@@ -44,7 +44,7 @@ ArgoCD watches this repo and automatically reconciles the cluster state with wha
 │   │   ├── deployment.yaml
 │   │   ├── service.yaml
 │   │   └── kustomization.yaml
-│   └── observability/            # Coming soon — OTEL Collector + Grafana dashboards
+│   └── observability/            # OTEL Collector + Grafana dashboards + alerts
 ├── .github/
 │   └── workflows/
 │       └── ci.yaml               # Gitleaks + kustomize build + kubeconform validation
@@ -60,85 +60,101 @@ Make sure you have these tools installed:
 
 - [`kubectl`](https://kubernetes.io/docs/tasks/tools/) — Kubernetes CLI
 - [`kustomize`](https://kubectl.docs.kubernetes.io/installation/kustomize/) >= 5.4.3
+- [`helm`](https://helm.sh/docs/intro/install/) >= 3.14 — required for observability stack deployment
 - [`argocd` CLI](https://argo-cd.readthedocs.io/en/stable/cli_installation/) (optional, for managing ArgoCD from terminal)
 - Access to a Kubernetes cluster (kind, minikube, or remote)
 - Access to the GitHub Container Registry (`ghcr.io/cloudops-squad-2/`)
+- **`metrics-server`** installed in the cluster — required for HPA (Horizontal Pod Autoscaler) to function. Most managed clusters include it by default. For kind/minikube see [metrics-server docs](https://github.com/kubernetes-sigs/metrics-server).
 
 ---
 
 ## Bootstrap (first time setup)
 
-### Step 1 — Install ArgoCD
+**Required bootstrap order** — components must come up in this sequence to avoid dependency failures:
+
+1. **ingress-nginx** — Ingress controller (all Ingress resources depend on it)
+2. **metrics-server** — required for HPA to function
+3. **ArgoCD** — sync controller
+4. **Namespace** — create manually so secrets can be applied before first sync
+5. **Secrets** — apply manually (gitignored, never committed)
+6. **Observability stack** (sync-wave 0) — kube-prometheus-stack + Tempo; must be running before the portal app so CRDs exist
+7. **Portal Application** (sync-wave 1) — ArgoCD syncs after observability CRDs are ready
+
+> **Note:** Prometheus, Grafana, and Tempo are **never exposed via public Ingress**. Access them via `kubectl port-forward` only (see [Observability Access](#observability-access)).
+
+### Step 1 — Install ingress-nginx
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
+kubectl wait --namespace ingress-nginx \
+  --for=condition=ready pod \
+  --selector=app.kubernetes.io/component=controller \
+  --timeout=120s
+```
+
+### Step 2 — Install metrics-server
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+# For kind/minikube (self-signed TLS): add --kubelet-insecure-tls to the metrics-server Deployment
+```
+
+### Step 3 — Install ArgoCD
 
 ```bash
 kubectl create namespace argocd
 kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-```
-
-Wait for all pods to be ready:
-
-```bash
 kubectl wait --for=condition=Ready pods --all -n argocd --timeout=120s
 ```
 
-> **Note:** This can take 2–3 minutes on a local cluster. If it times out, run the command again — pods may still be pulling images.
-
----
-
-### Step 2 — Create the namespace
-
-ArgoCD creates the namespace automatically on first sync (`CreateNamespace=true`), but secrets must be applied before the sync runs. Create the namespace manually first:
+### Step 4 — Create namespaces
 
 ```bash
 kubectl create namespace portal-dos-links
+kubectl create namespace observability
 ```
 
-> **Note:** If you skip this step, `kubectl apply -f k8s/api/secret.yaml` will fail with `namespaces "portal-dos-links" not found`.
+### Step 5 — Apply secrets manually
 
----
-
-### Step 3 — Apply secrets manually
-
-Secrets are **gitignored** and never committed. You must create and apply them before the first sync.
-
-See the [Secret Reference](#secret-reference) section for the exact YAML. Then apply:
+Secrets are **gitignored** and never committed. See the [Secret Reference](#secret-reference) section for the exact YAML.
 
 ```bash
 kubectl apply -f k8s/database/secret.yaml
 kubectl apply -f k8s/api/secret.yaml
 ```
 
-> **Note:** These secrets must exist before the API and database pods start. If pods are already running without them, restart the deployments after applying:
-> ```bash
-> kubectl rollout restart deployment/portal-api deployment/postgres -n portal-dos-links
-> ```
+### Step 6 — Register observability Applications with ArgoCD
 
----
+```bash
+kubectl apply -f argocd/observability/kube-prometheus-stack-app.yaml
+kubectl apply -f argocd/observability/tempo-app.yaml
+```
 
-### Step 4 — Register the Application with ArgoCD
+Watch the observability stack sync (wave 0):
+```bash
+kubectl get application -n argocd kube-prometheus-stack tempo -w
+```
+
+Wait for both to show `Synced` + `Healthy` before proceeding.
+
+### Step 7 — Register the portal Application with ArgoCD
 
 ```bash
 kubectl apply -f argocd/application.yaml
 ```
 
----
-
-### Step 5 — Watch the sync
-
+Watch sync (wave 1):
 ```bash
 kubectl get application -n argocd portal-dos-links -w
 ```
 
-You should see: `OutOfSync` → `Syncing` → `Synced`
-
-Then verify pods:
-
+Verify all pods healthy:
 ```bash
 kubectl get pods -n portal-dos-links
+kubectl get pods -n observability
 ```
 
-Expected output:
-
+Expected portal pods:
 ```
 NAME                               READY   STATUS    RESTARTS
 portal-api-xxx                     1/1     Running   0
@@ -146,25 +162,18 @@ portal-api-xxx                     1/1     Running   0
 portal-frontend-xxx                1/1     Running   0
 portal-frontend-xxx                1/1     Running   0
 postgres-xxx                       1/1     Running   0
+otel-collector-xxx                 1/1     Running   0
+otel-collector-xxx                 1/1     Running   0
 ```
 
-> **Note:** If pods show `0/1` with restarts, see [Troubleshooting](#troubleshooting).
-
----
-
-### Step 6 — Access the ArgoCD UI (optional)
+### Step 8 — Access the ArgoCD UI (optional)
 
 ```bash
-# Get the auto-generated admin password
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
-
-# Port-forward the UI (run in a separate terminal — it stays open)
 kubectl port-forward svc/argocd-server -n argocd 8080:443
 ```
 
-Open `https://localhost:8080` in your browser. Accept the self-signed certificate warning (click **Advanced → Proceed**) and log in with username `admin` and the password from above.
-
----
+Open `https://localhost:8080`. Accept the self-signed certificate warning and log in with `admin` and the password above.
 
 ## How to Deploy a New Version
 
@@ -209,13 +218,94 @@ metadata:
   namespace: portal-dos-links
 type: Opaque
 stringData:
-  DATABASE_URL: "postgres://portal:<your-password>@postgres-svc:5432/portal"
+  DATABASE_URL: "postgres://portal:<your-password-url-encoded>@postgres-svc:5432/portal"
 ```
 
 > **Important:**
+> - The key name is `DATABASE_URL` — the API calls `getOrThrow('DATABASE_URL')` and will not start without it.
 > - Use `postgres-svc` as the hostname — **not** `localhost`. That is the Kubernetes Service name the API uses inside the cluster.
 > - The database name in `DATABASE_URL` (`portal`) **must match** `POSTGRES_DB` in the database secret.
 > - The password in `DATABASE_URL` **must match** `POSTGRES_PASSWORD` in the database secret.
+> - **URL-encode the password:** special characters must be percent-encoded (e.g. `@` → `%40`, `#` → `%23`, `!` → `%21`). A password with unencoded special characters will cause a connection parse error.
+> - See `k8s/api/secret.example.yaml` for a ready-to-copy template.
+
+---
+
+## Ingress Layout
+
+Four separate Ingress objects live in `k8s/frontend/`. Each concern has its own object because the nginx `rewrite-target` annotation applies to the **entire Ingress** — mixing rewrite and non-rewrite paths on the same object would cause unintended path stripping.
+
+| File | Path | Backend | Rewrite |
+|---|---|---|---|
+| `ingress-frontend.yaml` | `/` (Prefix) | `portal-frontend-svc:80` | None |
+| `ingress-api.yaml` | `/api` (Prefix) | `portal-api-svc:3000` | None |
+| `ingress-redirect.yaml` | `/s/(.*)` (regex) | `portal-api-svc:3000` | `/$1` (strips `/s` prefix) |
+| `ingress-otlp.yaml` | `/otlp` (Prefix) | `otel-collector:4318` | None |
+
+**Why the redirect uses a separate Ingress:** the API handles `GET /:code` at the root. The `/s` prefix is a public URL convention exposed by this GitOps repo. The `ingress-redirect.yaml` strips `/s` before the request reaches the API, so the API code never needs to change. If `/api` were in the same Ingress as `/s`, the rewrite annotation would also strip `/api` from API requests, breaking all API routes.
+
+---
+
+## Observability Architecture
+
+The portal ships end-to-end observability: traces from the browser and the API, metrics from the API and the OTel Collector itself, and a Grafana dashboard with alerts.
+
+```
+Browser ──POST /otlp/v1/traces──► Ingress (/otlp, rate-limited)
+                                       │
+                                       ▼ :4318 HTTP
+API pods ──OTLP gRPC:4317────────► OTel Collector (portal-dos-links ns)
+                                       │  memory_limiter → batch
+                              ┌────────┴──────────────────┐
+                              ▼                           ▼
+                      Tempo :4317 gRPC             Prometheus :8889
+                   (observability ns)              ServiceMonitor
+                                                        │
+                                                        ▼
+                                                  Prometheus + Grafana
+                                               (kube-prometheus-stack,
+                                                observability ns)
+```
+
+**Components:**
+
+| Component | Namespace | Managed by |
+|---|---|---|
+| OTel Collector (2+ replicas) | `portal-dos-links` | Kustomize / ArgoCD |
+| Grafana dashboard ConfigMap | `portal-dos-links` | Kustomize / ArgoCD |
+| PrometheusRule (alerts) | `portal-dos-links` | Kustomize / ArgoCD |
+| Prometheus + Grafana + kube-state-metrics | `observability` | Helm / ArgoCD (wave 0) |
+| Tempo (single-binary) | `observability` | Helm / ArgoCD (wave 0) |
+
+**Key env vars on the API:**
+
+| Variable | Value |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4317` |
+| `OTEL_SERVICE_NAME` | `portal-dos-links-api` |
+| `OTEL_SEMCONV_STABILITY_OPT_IN` | `http` |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `30000` (ms) |
+
+---
+
+## Observability Access
+
+Prometheus, Grafana, and Tempo are **never exposed via public Ingress**. Use `kubectl port-forward`:
+
+```bash
+# Grafana (admin / prom-operator by default in kube-prometheus-stack)
+kubectl port-forward svc/kube-prometheus-stack-grafana -n observability 3000:80
+
+# Prometheus
+kubectl port-forward svc/kube-prometheus-stack-prometheus -n observability 9090:9090
+
+# Tempo (query API)
+kubectl port-forward svc/tempo -n observability 3200:3200
+```
+
+Open in browser: Grafana at `http://localhost:3000`, Prometheus at `http://localhost:9090`.
+
+> **Dashboard:** the "Portal dos Links" dashboard is auto-discovered by the Grafana sidecar from the `grafana-portal-dashboard` ConfigMap in namespace `portal-dos-links`.
 
 ---
 
@@ -225,7 +315,7 @@ Every push to `main` or `develop` and every PR triggers `.github/workflows/ci.ya
 
 1. **Gitleaks** — scans for accidentally committed secrets
 2. **kustomize build** — renders the full manifest to `rendered.yaml`
-3. **kubeconform** — validates rendered YAML against Kubernetes schemas (strict mode)
+3. **kubeconform** — validates rendered YAML against Kubernetes schemas in strict mode, including CRD schemas for ServiceMonitor, PrometheusRule, HPA, and PodDisruptionBudget
 
 > **Note:** ArgoCD syncs independently of CI. A failing pipeline does not block ArgoCD from syncing the last committed state.
 
@@ -295,7 +385,7 @@ Common causes:
 |---|---|---|
 | API logs show clean startup but pod restarts | Liveness probe failing — wrong port or path | Probe must be `GET /api/health` on port `3000` |
 | Frontend restarts ~40s after start | nginx SIGQUIT — probe hitting wrong port | Probe must be `GET /` on port `80` (not `3000`) |
-| API crashes with DB connection error | `DATABASE_URL` secret not applied, or using `localhost` as host | Apply secret; use `postgres-svc` as hostname |
+| API crashes with DB connection error | `DATABASE_URL` secret not applied, using `localhost` as host, or password not URL-encoded | Apply secret; use `postgres-svc` as hostname; URL-encode special chars in password |
 | Database pod crashes immediately | `postgres-secret` not applied | Apply `k8s/database/secret.yaml` first |
 
 ---
@@ -362,6 +452,89 @@ Also make sure each subdirectory has its own `kustomization.yaml`. Kustomize req
 ### Application repo CI fails to push tag bump to this repo
 
 The `update-manifests` job needs `CONFIG_REPO_PAT` set as a secret in the application repo. The PAT must have `contents: write` permission on this repository. Also ensure `yq` is installed in that job before the bump step.
+
+---
+
+### Observability — no data in Grafana panels
+
+1. Check that the OTel Collector pods are running:
+   ```bash
+   kubectl get pods -n portal-dos-links -l app=otel-collector
+   ```
+2. Verify the Collector is receiving metrics:
+   ```bash
+   kubectl exec -n portal-dos-links deploy/otel-collector -- \
+     wget -qO- http://localhost:8889/metrics | grep -E '^# TYPE (http|links)'
+   ```
+   If no output: the API is not sending metrics — check `OTEL_EXPORTER_OTLP_ENDPOINT` in the API pods.
+3. Check the ServiceMonitor is discovered by Prometheus:
+   ```bash
+   kubectl port-forward svc/kube-prometheus-stack-prometheus -n observability 9090:9090
+   # Open http://localhost:9090/targets and look for otel-collector
+   ```
+4. Check the Grafana datasource UID matches the dashboard variable. In Grafana: Configuration → Data Sources → Prometheus → copy the UID, verify it matches `${datasource}` variable default.
+
+---
+
+### Observability — Collector pods OOMKilled
+
+The memory_limiter is configured at 80% / spike 20% of the 512Mi limit. If OOMKill still occurs:
+1. Check container memory: `kubectl top pods -n portal-dos-links -l app=otel-collector`
+2. Increase `limits.memory` in `k8s/observability/otel-collector-deployment.yaml` (e.g. to 768Mi)
+3. Adjust `limit_percentage` accordingly in the ConfigMap
+
+---
+
+### Observability — Tempo not receiving spans
+
+1. Check Collector export errors:
+   ```bash
+   kubectl logs -n portal-dos-links deploy/otel-collector | grep -i "tempo\|export\|failed"
+   ```
+2. Verify Tempo is running:
+   ```bash
+   kubectl get pods -n observability -l app.kubernetes.io/name=tempo
+   ```
+3. Check Collector can reach Tempo:
+   ```bash
+   kubectl exec -n portal-dos-links deploy/otel-collector -- \
+     wget -qO- http://tempo.observability.svc.cluster.local:3200/ready
+   ```
+   Expected: `ready`
+
+---
+
+### `/s/<code>` gives 404 in the cluster
+
+The redirect path is handled by `ingress-redirect.yaml`, which uses regex and rewrite. Check:
+
+1. Confirm the Ingress exists and has the correct annotations:
+   ```bash
+   kubectl get ingress portal-redirect-ingress -n portal-dos-links -o yaml | grep -A5 annotations
+   ```
+   Expected: `use-regex: "true"` and `rewrite-target: /$1`.
+
+2. Confirm `pathType: ImplementationSpecific` — required for regex paths with ingress-nginx. If the pathType shows `Prefix` the regex won't be evaluated.
+
+3. Check if another Ingress for the same host has conflicting annotations. With ingress-nginx, all Ingresses sharing a host are merged into one nginx server block. An earlier Ingress with a catch-all `rewrite-target` annotation can shadow this one.
+   ```bash
+   kubectl get ingress -n portal-dos-links
+   ```
+
+4. Verify the API receives the rewritten path (without `/s`):
+   ```bash
+   kubectl logs -n portal-dos-links deployment/portal-api | grep "GET /"
+   ```
+   You should see `GET /<code>` — not `GET /s/<code>`.
+
+---
+
+### Observability — otelcol_exporter_send_failed_spans > 0
+
+The `CollectorExportFailures` alert has fired. Check:
+1. Tempo pod health (see above)
+2. Collector logs for TLS or connection errors
+3. Whether the sending queue is full: `otelcol_exporter_queue_size` metric in Prometheus
 
 ---
 

@@ -5,7 +5,7 @@ resources:
   - api
   - frontend
   - database
-# - observability
+  - observability
 
 images:
   - name: ghcr.io/cloudops-squad-2/portal-dos-links-api

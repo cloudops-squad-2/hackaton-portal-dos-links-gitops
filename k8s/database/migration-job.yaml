@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: prisma-migrate
+  namespace: portal-dos-links
+  annotations:
+    # ArgoCD PreSync hook: this Job runs once per sync, BEFORE any Deployment
+    # pods are updated. This prevents parallel migrate executions during scale-out
+    # (the initContainer approach runs on every new pod, including scale events).
+    argocd.argoproj.io/hook: PreSync
+    # Delete the Job after it succeeds so it doesn't accumulate between syncs.
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  # Retry up to 3 times before failing the sync.
+  backoffLimit: 3
+  # Auto-cleanup 10 minutes after completion (failed or succeeded).
+  # Without this, failed Jobs remain visible for manual inspection.
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: prisma-migrate
+          image: ghcr.io/cloudops-squad-2/portal-dos-links-api
+          # VERIFICATION REQUIRED at runtime:
+          # Check kubectl logs job/prisma-migrate -n portal-dos-links
+          # to confirm the Prisma 7 config filename before marking T8 done.
+          # Possible values: prisma7.config.ts | prisma.config.ts
+          # The --config flag is required for Prisma 7 (it does not auto-discover
+          # the config file by default). Without it, migrate deploy silently uses
+          # defaults and may fail or skip the config-driven URL override.
+          command:
+            - npx
+            - prisma
+            - migrate
+            - deploy
+            - --config
+            - prisma7.config.ts
+          envFrom:
+            - secretRef:
+                name: api-secret

@@ -1,0 +1,26 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: otel-collector
+  namespace: portal-dos-links
+  labels:
+    # Prometheus discovers ServiceMonitors via this label when
+    # serviceMonitorSelectorNilUsesHelmValues: false (configured in kube-prometheus-stack values).
+    app: otel-collector
+spec:
+  selector:
+    matchLabels:
+      app: otel-collector
+  endpoints:
+    # Target 1: application metrics (http_server_*, links_* counters from the API)
+    - port: prom-metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+
+    # Target 2: OTel Collector self-telemetry (otelcol_* metrics)
+    # Used in alerts: otelcol_exporter_send_failed_spans_total, otelcol_processor_refused_*
+    - port: self-metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

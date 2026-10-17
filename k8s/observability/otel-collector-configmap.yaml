@@ -5,32 +5,77 @@ metadata:
   namespace: portal-dos-links
 data:
   otel-collector-config.yaml: |
+    # Source of truth: k8s/observability/otel-collector-configmap.yaml
+    # Commit: see git log for latest SHA
+    # Copies of this file used in docker-compose must reference this file's origin.
+
+    extensions:
+      health_check:
+        # Exposes GET / on :13133 — used by liveness and readiness probes.
+        endpoint: 0.0.0.0:13133
+
     receivers:
       otlp:
         protocols:
           grpc:
+            # API pods send spans and metrics via gRPC OTLP to this port.
             endpoint: 0.0.0.0:4317
+          http:
+            # Browser sends spans via HTTP POST /otlp/v1/traces to :4318.
+            # The Ingress (ingress-otlp.yaml) routes /otlp → otel-collector:4318
+            # without rewrite; this path must match the Ingress path exactly.
+            endpoint: 0.0.0.0:4318
+            traces_url_path: /otlp/v1/traces
 
     processors:
+      # memory_limiter MUST be the first processor to prevent OOMKill.
+      # With a 512Mi container limit: 80% = ~410Mi hard limit, spike at 100Mi headroom.
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 20
+
       batch:
         timeout: 5s
         send_batch_size: 1024
 
     exporters:
-      otlphttp:
-        endpoint: http://tempo:4318
+      # Tempo single-binary: release name "tempo" in namespace "observability"
+      # → Service: tempo.observability.svc.cluster.local:4317
+      # Confirmed via chart template inspection (grafana-community/tempo 3.2.0).
+      otlp/tempo:
+        endpoint: tempo.observability.svc.cluster.local:4317
         tls:
           insecure: true
+        sending_queue:
+          queue_size: 1000
+        retry_on_failure:
+          max_elapsed_time: 60s
+
       prometheus:
         endpoint: 0.0.0.0:8889
+        # resource_to_telemetry_conversion: converts resource attributes
+        # (e.g. service.instance.id set via downward API) into Prometheus labels.
+        # Without this, metrics from multiple API replicas collide on the same
+        # label set and counters are incorrect.
+        resource_to_telemetry_conversion:
+          enabled: true
 
     service:
+      extensions: [health_check]
+
+      # Collector self-telemetry (otelcol_* metrics) on :8888
+      # Scraped by a separate ServiceMonitor target.
+      telemetry:
+        metrics:
+          address: 0.0.0.0:8888
+
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [batch]
-          exporters: [otlphttp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp/tempo]
         metrics:
           receivers: [otlp]
-          processors: [batch]
+          processors: [memory_limiter, batch]
           exporters: [prometheus]

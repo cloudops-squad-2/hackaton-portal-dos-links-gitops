@@ -1,0 +1,48 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  annotations:
+    # sync-wave 0: stack must be ready (CRDs + Prometheus) before the portal app (wave 1)
+    # uses ServiceMonitor and PrometheusRule.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    # Pinned: chart 92.10.1 / appVersion prometheus-operator v0.94.1
+    # Update only after reviewing the upgrade guide:
+    # https://github.com/prometheus-community/helm-charts/blob/main/charts/kube-prometheus-stack/README.md#upgrading-chart
+    targetRevision: "92.10.1"
+    helm:
+      valueFiles:
+        - $values/argocd/observability/kube-prometheus-stack-values.yaml
+  # Use a separate source for the values file (same Git repo)
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: "92.10.1"
+      helm:
+        valueFiles:
+          - $values/argocd/observability/kube-prometheus-stack-values.yaml
+    - repoURL: https://github.com/cloudops-squad-2/hackaton-portal-dos-links-gitops.git
+      targetRevision: develop
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true   # Required: CRD objects exceed annotation size limit
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m

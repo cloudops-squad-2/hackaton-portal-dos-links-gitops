@@ -3,6 +3,11 @@ kind: Application
 metadata:
   name: portal-dos-links
   namespace: argocd
+  annotations:
+    # sync-wave 1: runs after kube-prometheus-stack and tempo (wave 0).
+    # This ensures CRDs (ServiceMonitor, PrometheusRule) exist before ArgoCD
+    # attempts a dry-run on the portal's observability resources.
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   project: default
   source:
@@ -18,3 +23,16 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      # ServerSideApply=true: required for large CRD-derived objects (e.g. ServiceMonitor)
+      # that exceed the kubectl.kubernetes.io/last-applied-configuration annotation limit.
+      - ServerSideApply=true
+      # SkipDryRunOnMissingResource=true: prevents ArgoCD from failing the sync when
+      # ServiceMonitor/PrometheusRule CRDs are not yet installed (e.g. first sync before
+      # kube-prometheus-stack finishes its wave-0 sync).
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

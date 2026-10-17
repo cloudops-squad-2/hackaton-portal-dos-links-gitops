@@ -1,8 +1,16 @@
 name: ci
+
 on:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
+      - develop   # where the application repo bot pushes tag bumps
+
+# Minimal permissions — only read access to repo contents.
+# No write access needed for validation-only workflows.
+permissions:
+  contents: read
 
 jobs:
   validate:
@@ -26,4 +34,15 @@ jobs:
       - name: Render and validate
         run: |
           kustomize build k8s/ > rendered.yaml
-          kubeconform -strict -summary -ignore-missing-schemas rendered.yaml
+
+          # Validate against Kubernetes built-in schemas + CRD catalog.
+          # The CRD catalog covers ServiceMonitor, PrometheusRule, HPA (autoscaling/v2),
+          # PodDisruptionBudget, and other resources used in this repo.
+          # -strict: reject unknown fields (catches typos in field names)
+          # CRD catalog: https://github.com/datreeio/CRDs-catalog
+          kubeconform \
+            -strict \
+            -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            rendered.yaml

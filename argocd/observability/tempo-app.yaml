@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tempo
+  namespace: argocd
+  annotations:
+    # sync-wave 0: Tempo must be running before the portal app sends traces.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  sources:
+    - repoURL: https://grafana-community.github.io/helm-charts
+      chart: tempo
+      # Pinned: chart 3.2.0 / appVersion Tempo 3.1.0
+      # New repo after grafana/helm-charts migration (effective Jan 30 2026).
+      # Upgrade guide: https://github.com/grafana-community/helm-charts
+      targetRevision: "3.2.0"
+      helm:
+        valueFiles:
+          - $values/argocd/observability/tempo-values.yaml
+    - repoURL: https://github.com/cloudops-squad-2/hackaton-portal-dos-links-gitops.git
+      targetRevision: develop
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
