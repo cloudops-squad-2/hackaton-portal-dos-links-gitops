@@ -4,38 +4,27 @@ metadata:
   name: prisma-migrate
   namespace: portal-dos-links
   annotations:
-    # ArgoCD PreSync hook: this Job runs once per sync, BEFORE any Deployment
-    # pods are updated. This prevents parallel migrate executions during scale-out
-    # (the initContainer approach runs on every new pod, including scale events).
-    argocd.argoproj.io/hook: PreSync
-    # Delete the Job after it succeeds so it doesn't accumulate between syncs.
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+    # Sync hook (not PreSync): PreSync runs before Postgres exists on a fresh install.
+    # Wave 1 = after wave 0 (Postgres, PVC, Service) is Healthy, before wave 2 (API).
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "1"
+    # A failed Job stays for inspection; the next sync replaces it.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
-  # Retry up to 3 times before failing the sync.
-  backoffLimit: 3
-  # Auto-cleanup 10 minutes after completion (failed or succeeded).
-  # Without this, failed Jobs remain visible for manual inspection.
-  ttlSecondsAfterFinished: 600
+  # Generous retry budget: on a fresh install Postgres may still be
+  # accepting connections a few seconds after it reports Ready.
+  backoffLimit: 6
   template:
     spec:
       restartPolicy: OnFailure
       containers:
         - name: prisma-migrate
+          # Must resolve to the same tag as the API Deployment (see kustomization images:).
           image: ghcr.io/cloudops-squad-2/portal-dos-links-api
-          # VERIFICATION REQUIRED at runtime:
-          # Check kubectl logs job/prisma-migrate -n portal-dos-links
-          # to confirm the Prisma 7 config filename before marking T8 done.
-          # Possible values: prisma7.config.ts | prisma.config.ts
-          # The --config flag is required for Prisma 7 (it does not auto-discover
-          # the config file by default). Without it, migrate deploy silently uses
-          # defaults and may fail or skip the config-driven URL override.
-          command:
-            - npx
-            - prisma
-            - migrate
-            - deploy
-            - --config
-            - prisma7.config.ts
+          # Same command the old initContainer used (known to work in this image).
+          # If you later switch to a Prisma config file, verify the filename first:
+          #   kubectl exec deploy/portal-api -n portal-dos-links -- ls -la . prisma
+          command: ["sh", "-c", "npx prisma migrate deploy --schema=prisma/schema.prisma"]
           envFrom:
             - secretRef:
                 name: api-secret
