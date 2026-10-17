@@ -18,10 +18,13 @@ spec:
       initContainers:
         - name: prisma-migrate
           image: ghcr.io/cloudops-squad-2/portal-dos-links-api
-          command: ["npx", "prisma", "migrate", "deploy"]
-          envFrom:
-            - secretRef:
-                name: api-secret
+          command: ["sh", "-c", "npx prisma migrate deploy --schema=prisma/schema.prisma"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: api-secret
+                  key: DATABASE_URL
       containers:
         - name: portal-api
           image: ghcr.io/cloudops-squad-2/portal-dos-links-api
