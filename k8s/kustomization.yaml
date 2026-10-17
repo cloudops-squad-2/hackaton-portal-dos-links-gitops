@@ -9,6 +9,6 @@ resources:
 
 images:
   - name: ghcr.io/cloudops-squad-2/portal-dos-links-api
-    newTag: "09876f7"
+    newTag: "70ff9a1"
   - name: ghcr.io/cloudops-squad-2/portal-dos-links-frontend
-    newTag: "09876f7"
+    newTag: "70ff9a1"
