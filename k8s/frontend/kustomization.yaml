@@ -6,6 +6,7 @@ resources:
   - service.yaml
   - ingress-api.yaml
   - ingress-frontend.yaml
+  - ingress-redirect.yaml
   - ingress-otlp.yaml
   - hpa.yaml
   - pdb.yaml

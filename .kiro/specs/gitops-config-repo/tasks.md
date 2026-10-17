@@ -57,25 +57,33 @@
 
 ---
 
-### Task 5 — Observability Manifests ❌ BROKEN
+### Task 5 — Observability Manifests ⚠️ DONE — metric names must be verified at runtime
 
-`k8s/observability/` exists but is non-functional. Defects tracked in T4 and T5:
+`k8s/observability/` reescrito e funcional. Todos os defects de G3/G4/G5/G12 foram corrigidos nas tasks T3–T5.
 
-| Defect | ID | Fix task |
+**Corrigidos:**
+
+| Defect | ID | Status |
 |---|---|---|
-| Collector exports traces to `http://tempo:4318` — Service does not exist | G3 | T4 |
-| No `memory_limiter` — retry queue grows to OOMKill under load | G3 | T4 |
-| No `health_check` extension — no probes on Deployment | G3 | T4 |
-| No OTLP/HTTP receiver — browser traces cannot reach Collector | G3 | T4 |
-| Collector has 1 replica, no HPA, no PDB | G4 | T4 |
-| No ServiceMonitor — Prometheus has no scrape target | G4 | T4 |
-| No Prometheus, Grafana, or kube-state-metrics deployed | G4 | T3 |
-| Grafana dashboard ConfigMap is orphaned (no Grafana to consume it) | G4 | T3 |
-| Dashboard panel 4 uses `kube_pod_status_ready` — requires kube-state-metrics | G4 | T3/T5 |
-| Dashboard queries use unverified metric names | G5 | T5 |
-| `rate(...[1m])` window too short for 30 s scrape interval | G5 | T5 |
-| Datasource referenced as string `"Prometheus"` not by UID | G5 | T5 |
-| Collector version in spec was `0.97.0`, manifest has `0.100.0` | G12 | T4 |
+| Collector exports traces to `http://tempo:4318` — Service does not exist | G3 | ✅ Corrigido em T4: endpoint `tempo.observability.svc.cluster.local:4317` |
+| No `memory_limiter` — retry queue grows to OOMKill under load | G3 | ✅ Corrigido em T4 |
+| No `health_check` extension — no probes on Deployment | G3 | ✅ Corrigido em T4 |
+| No OTLP/HTTP receiver — browser traces cannot reach Collector | G3 | ✅ Corrigido em T4 |
+| Collector has 1 replica, no HPA, no PDB | G4 | ✅ Corrigido em T4 |
+| No ServiceMonitor — Prometheus has no scrape target | G4 | ✅ Corrigido em T4 |
+| No Prometheus, Grafana, or kube-state-metrics deployed | G4 | ✅ Corrigido em T3 |
+| Grafana dashboard ConfigMap is orphaned (no Grafana to consume it) | G4 | ✅ Corrigido em T3 |
+| Dashboard panel 4 uses `kube_pod_status_ready` — requires kube-state-metrics | G4 | ✅ Corrigido em T3/T5 |
+| Dashboard queries use unverified metric names | G5 | ⚠️ Pendente verificação em runtime |
+| `rate(...[1m])` window too short for 30 s scrape interval | G5 | ✅ Corrigido em T5: janelas de 2m |
+| Datasource referenced as string `"Prometheus"` not by UID | G5 | ✅ Corrigido em T5: usa UID via variável `${datasource}` |
+| Collector version in spec was `0.97.0`, manifest has `0.100.0` | G12 | ✅ Corrigido em T4: pinado em `0.163.1` |
+
+**Pendente de verificação em cluster:**
+- Nomes exatos das métricas HTTP (`http_server_request_duration_seconds_*`) — confirmar via `kubectl exec deploy/otel-collector -- wget -qO- http://localhost:8889/metrics | grep '^# TYPE http'`
+- Nomes das métricas `otelcol_*` — confirmar via porta `:8888`
+
+**Contadores de negócio no repo da aplicação:** `links.not_found` e `links.click_limit_reached` adicionados em `api/src/link/metrics.ts` e incrementados em `link.service.ts` — alinhados com dashboard (painel 3) e alertas.
 
 ---
 

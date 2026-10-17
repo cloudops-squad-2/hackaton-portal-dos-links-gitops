@@ -231,6 +231,21 @@ stringData:
 
 ---
 
+## Ingress Layout
+
+Four separate Ingress objects live in `k8s/frontend/`. Each concern has its own object because the nginx `rewrite-target` annotation applies to the **entire Ingress** — mixing rewrite and non-rewrite paths on the same object would cause unintended path stripping.
+
+| File | Path | Backend | Rewrite |
+|---|---|---|---|
+| `ingress-frontend.yaml` | `/` (Prefix) | `portal-frontend-svc:80` | None |
+| `ingress-api.yaml` | `/api` (Prefix) | `portal-api-svc:3000` | None |
+| `ingress-redirect.yaml` | `/s/(.*)` (regex) | `portal-api-svc:3000` | `/$1` (strips `/s` prefix) |
+| `ingress-otlp.yaml` | `/otlp` (Prefix) | `otel-collector:4318` | None |
+
+**Why the redirect uses a separate Ingress:** the API handles `GET /:code` at the root. The `/s` prefix is a public URL convention exposed by this GitOps repo. The `ingress-redirect.yaml` strips `/s` before the request reaches the API, so the API code never needs to change. If `/api` were in the same Ingress as `/s`, the rewrite annotation would also strip `/api` from API requests, breaking all API routes.
+
+---
+
 ## Observability Architecture
 
 The portal ships end-to-end observability: traces from the browser and the API, metrics from the API and the OTel Collector itself, and a Grafana dashboard with alerts.
@@ -486,6 +501,31 @@ The memory_limiter is configured at 80% / spike 20% of the 512Mi limit. If OOMKi
      wget -qO- http://tempo.observability.svc.cluster.local:3200/ready
    ```
    Expected: `ready`
+
+---
+
+### `/s/<code>` gives 404 in the cluster
+
+The redirect path is handled by `ingress-redirect.yaml`, which uses regex and rewrite. Check:
+
+1. Confirm the Ingress exists and has the correct annotations:
+   ```bash
+   kubectl get ingress portal-redirect-ingress -n portal-dos-links -o yaml | grep -A5 annotations
+   ```
+   Expected: `use-regex: "true"` and `rewrite-target: /$1`.
+
+2. Confirm `pathType: ImplementationSpecific` — required for regex paths with ingress-nginx. If the pathType shows `Prefix` the regex won't be evaluated.
+
+3. Check if another Ingress for the same host has conflicting annotations. With ingress-nginx, all Ingresses sharing a host are merged into one nginx server block. An earlier Ingress with a catch-all `rewrite-target` annotation can shadow this one.
+   ```bash
+   kubectl get ingress -n portal-dos-links
+   ```
+
+4. Verify the API receives the rewritten path (without `/s`):
+   ```bash
+   kubectl logs -n portal-dos-links deployment/portal-api | grep "GET /"
+   ```
+   You should see `GET /<code>` — not `GET /s/<code>`.
 
 ---
 

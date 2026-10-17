@@ -1,4 +1,4 @@
-# Requirements — GitOps Config Repo (Portal dos Links)
+﻿# Requirements — GitOps Config Repo (Portal dos Links)
 
 ## Context
 
@@ -98,16 +98,18 @@ Each of the three components has a complete set of manifests inside `k8s/<compon
 - **R4.4.4** ⏳ Dashboard datasource MUST be referenced by UID variable, not by the hardcoded string `"Prometheus"`
 - **R4.4.5** ⏳ Root kustomization line `# - observability` MUST remain commented until T3–T9 pass CI validation (T12 uncomments it)
 
-### R5 — Ingress / Networking ⏳
+### R5 — Ingress / Networking ✅
 
-- **R5.1** ⏳ Split Ingress design — **no nginx rewrite on any API path** (contract: the API handles the full path natively):
-  - `ingress-api.yaml` — Prefix `/api` and `/s` **without** `rewrite-target`, forwarded to `portal-api-svc:3000`
-  - `ingress-frontend.yaml` — Prefix `/` to `portal-frontend-svc:80`, no rewrite
-  - `ingress-otlp.yaml` *(new)* — Prefix `/otlp` to `otel-collector:4318`, no rewrite, with `limit-rps` and `proxy-body-size` annotations
-- **R5.2** ⏳ WHEN a browser GETs `/s/<code>`, THE SYSTEM SHALL forward the request as-is to `portal-api-svc:3000` and return a `302` redirect. No path rewriting. *(Current manifest is Prefix without rewrite — correct by contract, but spec previously described rewrite incorrectly)*
-- **R5.3** ✅ Static assets (`/assets/*`) reach nginx correctly via `ingress-frontend.yaml` (no rewrite)
-- **R5.4** ⏳ WHEN a browser POSTs to `/otlp/v1/traces`, THE SYSTEM SHALL forward the full path to the Collector HTTP receiver; the Collector `traces_url_path: /otlp/v1/traces` matches the path without Ingress rewrite
+Four separate Ingress objects, one per concern. The rewrite annotation in `ingress-redirect.yaml` applies only to that object; all other Ingresses are annotation-free.
 
+- **R5.1** ✅ `ingress-api.yaml` — Prefix `/api` **without** `rewrite-target`, forwarded to `portal-api-svc:3000`
+- **R5.2** ✅ `ingress-frontend.yaml` — Prefix `/` to `portal-frontend-svc:80`, no rewrite; static assets (`/assets/*`) pass through correctly
+- **R5.3** ✅ `ingress-redirect.yaml` — regex `/s/(.*)` with `use-regex: "true"` and `rewrite-target: /$`1`; strips the `/s` prefix before forwarding to `portal-api-svc:3000`. The API serves `GET /:code` at the root and is not modified.
+- **R5.4** ✅ `ingress-otlp.yaml` — Prefix `/otlp` to `otel-collector:4318`, no rewrite, with `limit-rps: 100` and `proxy-body-size: 1m`; the Collector matches `/otlp/v1/traces` via `traces_url_path` config
+- **R5.5** ✅ WHEN a browser GETs `/s/<code>`, THE SYSTEM SHALL rewrite the path to `/<code>` and forward it to `portal-api-svc:3000`, which returns `302`.
+- **R5.6** ✅ WHEN a browser POSTs to `/otlp/v1/traces`, THE SYSTEM SHALL forward the full path intact to the Collector HTTP receiver.
+
+**Rejected alternative (M1 / D1 revision):** serve `GET /s/:code` natively in the API (no Ingress rewrite). Rejected because it requires modifying the application repo's route definitions, which is outside the scope of this GitOps repo.
 ### R6 — Repo Hygiene ✅
 
 - **R6.1** ✅ `README.md` written — covers identity, structure, bootstrap, deploy, secret reference, troubleshooting, Kiro usage (observability section needs update — see T11)

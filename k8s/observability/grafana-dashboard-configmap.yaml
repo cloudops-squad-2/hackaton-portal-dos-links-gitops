@@ -13,7 +13,7 @@ data:
       "uid": "portal-dos-links",
       "title": "Portal dos Links",
       "schemaVersion": 38,
-      "version": 2,
+      "version": 3,
       "refresh": "30s",
       "time": { "from": "now-1h", "to": "now" },
       "templating": {
@@ -34,7 +34,7 @@ data:
           "id": 1,
           "type": "timeseries",
           "title": "Redirects por segundo (links.redirected)",
-          "description": "Rate of successful link redirects. Uses links_redirected_total counter. Metric names verified from :8889/metrics — see T5 acceptance checklist.",
+          "description": "Counter links_redirected_total incremented by the API on every successful redirect. Rate window 2m >= 4x the 30s export interval. No /s/ filter needed — the API never sees /s.",
           "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [
@@ -104,23 +104,23 @@ data:
         {
           "id": 4,
           "type": "timeseries",
-          "title": "Latência HTTP p50 / p95 / p99",
-          "description": "Metric: http_server_request_duration_seconds_bucket. Requires OTEL_SEMCONV_STABILITY_OPT_IN=http. Verify name from :8889/metrics before accepting T5.",
+          "title": "Latência HTTP p50 / p95 / p99 (rota /:code)",
+          "description": "Filtered by http_route='/:code' — the route the API registers for redirects. The Ingress strips /s before the request reaches the API, so the route is always /:code, never /s/:code. Metric name assumes OTEL_SEMCONV_STABILITY_OPT_IN=http. Verify from :8889/metrics.",
           "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [
             {
-              "expr": "histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket{job=\"otel-collector\"}[2m])) by (le))",
+              "expr": "histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket{http_route=\"/:code\"}[2m])) by (le))",
               "legendFormat": "p50",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{job=\"otel-collector\"}[2m])) by (le))",
+              "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{http_route=\"/:code\"}[2m])) by (le))",
               "legendFormat": "p95",
               "refId": "B"
             },
             {
-              "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket{job=\"otel-collector\"}[2m])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket{http_route=\"/:code\"}[2m])) by (le))",
               "legendFormat": "p99",
               "refId": "C"
             }
@@ -135,13 +135,13 @@ data:
         {
           "id": 5,
           "type": "timeseries",
-          "title": "Taxa de erros HTTP 5xx (%)",
-          "description": "Metric: http_server_request_duration_seconds_count with http_response_status_code label. Verify label name from :8889/metrics.",
+          "title": "Taxa de erros HTTP 5xx (%) — todas as rotas da API",
+          "description": "Ratio of 5xx responses across all API routes. Filtered to service_name=portal-dos-links-api to exclude Collector self-metrics. Metric name assumes OTEL_SEMCONV_STABILITY_OPT_IN=http. Verify http_response_status_code label name from :8889/metrics.",
           "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [
             {
-              "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\"}[2m])) / sum(rate(http_server_request_duration_seconds_count[2m])) * 100",
+              "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\",service_name=\"portal-dos-links-api\"}[2m])) / sum(rate(http_server_request_duration_seconds_count{service_name=\"portal-dos-links-api\"}[2m])) * 100",
               "legendFormat": "5xx %",
               "refId": "A"
             }
@@ -234,7 +234,7 @@ data:
           "id": 8,
           "type": "timeseries",
           "title": "Falhas de envio do Collector (otelcol_*)",
-          "description": "Alert fires when this is > 0. See alert CollectorExportFailures.",
+          "description": "Alert CollectorExportFailures fires when this is > 0. Uses self-telemetry from :8888/metrics.",
           "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [

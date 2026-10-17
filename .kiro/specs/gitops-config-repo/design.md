@@ -1,4 +1,27 @@
-# Design — GitOps Config Repo (Portal dos Links)
+﻿# Design — GitOps Config Repo (Portal dos Links)## Inter-Repository Contract
+
+This table defines the interface between this GitOps repo and the application repo. Neither side may change these values unilaterally.
+
+| Item | Value |
+|---|---|
+| Redirect public URL | `/s/:code` — the `/s` prefix is stripped by `ingress-redirect.yaml` (rewrite `/\`) before reaching the API |
+| API route for redirect | `GET /:code` at the root — **not modified** in the application repo |
+| API container command | Deployment does **not** define `command` or `args`; the image CMD (`node --import ./dist/tracing.js dist/main.js`) runs as-is |
+| OTel endpoint | `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317` |
+| OTel service name | `OTEL_SERVICE_NAME=portal-dos-links-api` |
+| OTel sampler | `OTEL_TRACES_SAMPLER=parentbased_traceidratio`, `ARG=0.1` |
+| Metric export interval | `OTEL_METRIC_EXPORT_INTERVAL=30000` (ms); rate windows in dashboard and alerts must be ≥ 4× this value (≥ 2 min) |
+| HTTP semconv | `OTEL_SEMCONV_STABILITY_OPT_IN=http` — identical in cluster (ConfigMap) and in app repo docker-compose |
+| Custom metric names | `links.created`, `links.redirected`, `links.expired`, `links.not_found`, `links.click_limit_reached` → Prometheus: `links_*_total` |
+| Metric labels | **No** label with link code or URL on any metric |
+| Dashboard/alert route filter | `http.route="/:code"` — **not** `/s/.*` (because the API never sees `/s`) |
+| Browser trace path | `POST /otlp/v1/traces` forwarded by `ingress-otlp.yaml` to Collector `:4318`; no rewrite; Collector `traces_url_path: /otlp/v1/traces` |
+| API secret key | `DATABASE_URL` (full Postgres connection string, URL-encoded password) |
+| Pool constraint | `maxReplicas (6) × PG_POOL_MAX (10) = 60 ≤ 80% × 100 = 80` |
+| Observability source of truth | This repo (`k8s/observability/`); the app repo docker-compose copies `otel-collector-config.yaml` and the dashboard JSON with a header comment indicating the origin commit |
+
+---
+
 
 ## Repository Layout
 
@@ -24,8 +47,9 @@ hackaton-portal-dos-links-gitops/
 │   ├── frontend/
 │   │   ├── deployment.yaml                 # (updated in T7)
 │   │   ├── service.yaml
-│   │   ├── ingress-api.yaml                # /api and /s — no rewrite (fixed in T2)
+│   │   ├── ingress-api.yaml                # /api only — no rewrite (M1)
 │   │   ├── ingress-frontend.yaml           # / — no rewrite
+│   │   ├── ingress-redirect.yaml           # /s/(.*) → rewrite /$1 → portal-api-svc (M1)
 │   │   ├── ingress-otlp.yaml               # /otlp → otel-collector:4318 (new — T7)
 │   │   ├── hpa.yaml                        # (new — T7)
 │   │   ├── pdb.yaml                        # (new — T7)
@@ -176,41 +200,55 @@ The database Service is `ClusterIP` — never exposed outside the cluster. The `
 
 ## Ingress Design
 
-Three Ingress resources, all in `k8s/frontend/` except `ingress-otlp.yaml` which is also in `k8s/frontend/` for kustomization grouping.
+Four Ingress objects, all in `k8s/frontend/`. Each concern has its own object because the nginx `rewrite-target` annotation applies to the entire Ingress — mixing rewrite and non-rewrite paths on the same object would cause unintended path stripping.
 
-### `ingress-api.yaml` — no rewrite (contract)
+### `ingress-api.yaml` — no rewrite
 
-```
+`
 /api (Prefix) → portal-api-svc:3000  (path forwarded as-is)
-/s   (Prefix) → portal-api-svc:3000  (path forwarded as-is; API handles GET /s/:code natively)
-```
+`
 
-No `rewrite-target` annotation. See D1 for the rejected alternative.
+No annotation. `/api/links`, `/api/health`, `/api/ready` all pass through unmodified.
+
+### `ingress-redirect.yaml` — regex rewrite (M1 decision)
+
+`
+/s/(.*) (ImplementationSpecific) → portal-api-svc:3000  (rewritten to /)
+`
+
+Annotations:
+`yaml
+nginx.ingress.kubernetes.io/use-regex: "true"
+nginx.ingress.kubernetes.io/rewrite-target: /
+`
+
+Strips the `/s` prefix so the API receives `GET /<code>` at the root. The API is not modified.
+
+**Why separate from ingress-api.yaml:** the `rewrite-target` annotation affects every path in an Ingress. If `/api` were in the same object, requests to `/api/links` would be rewritten to `/links`, breaking the API.
 
 ### `ingress-frontend.yaml` — no rewrite
 
-```
+`
 / (Prefix) → portal-frontend-svc:80
-```
+`
 
-No rewrite annotation — nginx passes the full path through, so `/assets/app.js` reaches nginx correctly.
+No annotation. `/assets/app.js` and all static assets pass through correctly.
 
 ### `ingress-otlp.yaml` — no rewrite, with rate limiting
 
-```
+`
 /otlp (Prefix) → otel-collector:4318  (Collector matches /otlp/v1/traces via traces_url_path config)
-```
+`
 
 Annotations:
-```yaml
+`yaml
 nginx.ingress.kubernetes.io/limit-rps: "100"
 nginx.ingress.kubernetes.io/proxy-body-size: "1m"
-```
+`
 
-Hostname: `portal.localdev` for local clusters on all three Ingresses.
+Hostname: `portal.localdev` for local clusters on all four Ingresses.
 
 ---
-
 ## Architecture Decision Records
 
 ### D1 — Redirect Path: Ingress sem rewrite

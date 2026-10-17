@@ -34,10 +34,12 @@ spec:
             description: "More than 2% of API responses are 5xx for the last 5 minutes."
 
         - alert: APIHighLatency
+          # Filtered to /:code route — the route the API registers for redirects.
+          # The Ingress strips /s before the request reaches the API.
           expr: |
             histogram_quantile(
               0.99,
-              sum(rate(http_server_request_duration_seconds_bucket[2m])) by (le)
+              sum(rate(http_server_request_duration_seconds_bucket{http_route="/:code"}[2m])) by (le)
             ) > 0.5
           for: 10m
           labels:
