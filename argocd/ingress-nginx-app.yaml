@@ -1,0 +1,52 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ingress-nginx
+  namespace: argocd
+  annotations:
+    # Must be healthy BEFORE the portal: the portal's Ingresses only become
+    # Healthy once they have an ADDRESS, and ArgoCD blocks wave 1 (migration)
+    # until they do. Apply this Application first (see README Step 2).
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  source:
+    repoURL: https://kubernetes.github.io/ingress-nginx
+    chart: ingress-nginx
+    # Pinned: chart 4.10.1 ships controller v1.10.1
+    targetRevision: "4.10.1"
+    helm:
+      valuesObject:
+        controller:
+          replicaCount: 1
+          service:
+            # NodePort, not LoadBalancer: minikube/kind have no cloud load
+            # balancer, so a LoadBalancer Service stays <pending> forever and
+            # Ingresses never get an address.
+            type: NodePort
+          # publishService copies the Service's external IP onto Ingresses.
+          # A NodePort Service has none, so turn it off...
+          publishService:
+            enabled: false
+          # ...and publish the node's internal IP instead (minikube: 192.168.49.2).
+          # No hardcoded IP, so it works on any local cluster.
+          reportNodeInternalIp: true
+          ingressClassResource:
+            name: nginx
+            default: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ingress-nginx
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
