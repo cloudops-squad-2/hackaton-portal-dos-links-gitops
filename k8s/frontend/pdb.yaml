@@ -1,10 +1,16 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: portal-frontend-pdb
+  name: portal-api-pdb
   namespace: portal-dos-links
+  annotations:
+    # Same wave as the API Deployment, so the PDB is not evaluated before the
+    # API pods exist.
+    argocd.argoproj.io/sync-wave: "2"
 spec:
+  # Guarantee at least 1 API pod remains available during node drains,
+  # rolling updates, and voluntary disruptions.
   minAvailable: 1
   selector:
     matchLabels:
-      app: portal-frontend
+      app: portal-api

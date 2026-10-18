@@ -31,8 +31,10 @@ spec:
       # kube-prometheus-stack finishes its wave-0 sync).
       - SkipDryRunOnMissingResource=true
     retry:
-      limit: 5
+      # 10 retries / 5m max backoff: a cold first sync (image pulls, Postgres
+      # start, migration Job) can take several minutes; 5 retries gave up too early.
+      limit: 10
       backoff:
-        duration: 5s
+        duration: 10s
         factor: 2
-        maxDuration: 3m
+        maxDuration: 5m
