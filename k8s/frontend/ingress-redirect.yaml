@@ -1,0 +1,35 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: portal-redirect-ingress
+  namespace: portal-dos-links
+  annotations:
+    # This Ingress strips the /s prefix before forwarding to the API.
+    # The API handles GET /:code at the root — it does not know about /s.
+    #
+    # Decision M1: the API keeps GET /:code unchanged (no route modification
+    # in the application repo). The public URL /s/:code is exposed here by
+    # rewriting /s/<code> → /<code>.
+    #
+    # Rejected alternative (D1 original): serve GET /s/:code natively in the API.
+    # Rejected because it would require changing the application repo's routes,
+    # which is outside this repo's scope.
+    #
+    # RISK: the rewrite annotation applies to ALL paths in this Ingress.
+    # That is why /api and /otlp are in separate Ingress objects — mixing them
+    # here would cause their paths to be rewritten too.
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /s/(.*)
+            # ImplementationSpecific is required for regex paths with ingress-nginx.
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: portal-api-svc
+                port:
+                  number: 3000

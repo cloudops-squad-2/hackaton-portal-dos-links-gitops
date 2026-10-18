@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: portal-api-pdb
+  namespace: portal-dos-links
+spec:
+  # Guarantee at least 1 API pod remains available during node drains,
+  # rolling updates, and voluntary disruptions.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: portal-api

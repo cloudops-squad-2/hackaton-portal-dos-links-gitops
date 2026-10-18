@@ -1,0 +1,138 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portal-api
+  namespace: portal-dos-links
+  labels:
+    app: portal-api
+  annotations:
+    # Wave 0: Postgres, PVC, Services
+    # Wave 1: prisma-migrate Job (Sync hook)
+    # Wave 2: this Deployment, so the API starts only after migrations finish.
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  # replicas: NOT SET — managed by HPA (k8s/api/hpa.yaml).
+  # Setting replicas here would conflict with selfHeal: true in ArgoCD.
+  selector:
+    matchLabels:
+      app: portal-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # maxUnavailable: 0 — no pod is removed until the new one is ready.
+      # maxSurge: 1 — one extra pod is created during the rollout.
+      # Guarantees zero-downtime rollouts.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: portal-api
+    spec:
+      # Spread replicas across nodes for availability.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: portal-api
+
+      # ── Termination ──────────────────────────────────────────────────────────
+      # 30s gives the preStop hook (5s sleep) + NestJS graceful shutdown time.
+      terminationGracePeriodSeconds: 30
+
+      # NOTE: the prisma-migrate initContainer was removed.
+      # Migrations now run once per sync via k8s/database/migration-job.yaml.
+
+      containers:
+        - name: portal-api
+          image: ghcr.io/cloudops-squad-2/portal-dos-links-api
+          # IMPORTANT: Do NOT set command or args here.
+          # The image CMD is: node --import ./dist/tracing.js dist/main.js
+          # Overriding it would silently disable the OTel auto-instrumentation.
+          # Verify with: kubectl exec deploy/portal-api -- cat /proc/1/cmdline
+
+          ports:
+            - containerPort: 3000
+
+          # ── Lifecycle ────────────────────────────────────────────────────────
+          lifecycle:
+            preStop:
+              exec:
+                # Sleep 5s before SIGTERM so the Ingress controller removes this
+                # pod from the upstream pool before it stops accepting connections.
+                command: ["sh", "-c", "sleep 5"]
+
+          # ── Environment ──────────────────────────────────────────────────────
+          envFrom:
+            - configMapRef:
+                name: api-config
+            - secretRef:
+                name: api-secret
+
+          env:
+            # Downward API: inject pod identity for OTel resource attributes.
+            # These must be declared BEFORE OTEL_RESOURCE_ATTRIBUTES so that
+            # the $(VAR) syntax interpolation works in the same env block.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # service.instance.id differentiates metrics from each replica.
+            # Without this, Prometheus counters from 2+ replicas collide on
+            # identical label sets and produce incorrect rates.
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.instance.id=$(POD_NAME),k8s.pod.name=$(POD_NAME),k8s.namespace.name=$(POD_NAMESPACE)"
+
+          # ── Resources ────────────────────────────────────────────────────────
+          resources:
+            requests:
+              cpu: 100m
+              # Node.js + OTel auto-instrumentation baseline.
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              # 384Mi starting point. Validate under load — increase to 512Mi if
+              # OOM errors appear. Monitor via the "Pods prontos" panel.
+              memory: 384Mi
+
+          # ── Probes ───────────────────────────────────────────────────────────
+          # startupProbe: covers cold-start + OTel SDK initialization.
+          # 30 attempts × 5s = 150s max startup window.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+
+          # livenessProbe: basic process health check.
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # readinessProbe: checks database connectivity.
+          # Pod only receives traffic when it can reach the DB.
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: 3000
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            failureThreshold: 3
+
+      # ── imagePullSecrets (optional) ─────────────────────────────────────────
+      # Uncomment and apply as a Kustomize overlay patch if ghcr.io is private.
+      # Do NOT commit as base manifest — auth is environment-specific.
+      # imagePullSecrets:
+      #   - name: ghcr-pull-secret

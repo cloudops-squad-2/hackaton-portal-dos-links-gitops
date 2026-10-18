@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: portal-api-ingress
+  namespace: portal-dos-links
+  # No rewrite-target annotation — /api path is forwarded as-is to the API.
+  # Kept in a separate Ingress from ingress-redirect.yaml because the rewrite
+  # annotation applies to the entire Ingress object; mixing rewrite and non-rewrite
+  # paths on the same Ingress would strip /api prefix unintentionally.
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: portal-api-svc
+                port:
+                  number: 3000

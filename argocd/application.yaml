@@ -1,0 +1,40 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: portal-dos-links
+  namespace: argocd
+  annotations:
+    # sync-wave 1: runs after kube-prometheus-stack and tempo (wave 0).
+    # This ensures CRDs (ServiceMonitor, PrometheusRule) exist before ArgoCD
+    # attempts a dry-run on the portal's observability resources.
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/cloudops-squad-2/hackaton-portal-dos-links-gitops.git
+    targetRevision: main
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: portal-dos-links
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # ServerSideApply=true: required for large CRD-derived objects (e.g. ServiceMonitor)
+      # that exceed the kubectl.kubernetes.io/last-applied-configuration annotation limit.
+      - ServerSideApply=true
+      # SkipDryRunOnMissingResource=true: prevents ArgoCD from failing the sync when
+      # ServiceMonitor/PrometheusRule CRDs are not yet installed (e.g. first sync before
+      # kube-prometheus-stack finishes its wave-0 sync).
+      - SkipDryRunOnMissingResource=true
+    retry:
+      # 10 retries / 5m max backoff: a cold first sync (image pulls, Postgres
+      # start, migration Job) can take several minutes; 5 retries gave up too early.
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m

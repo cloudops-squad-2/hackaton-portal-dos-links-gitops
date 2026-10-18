@@ -1,0 +1,126 @@
+# kube-prometheus-stack values — local cluster / hackathon profile
+# Chart: prometheus-community/kube-prometheus-stack 92.10.1
+# Prometheus Operator: v0.94.1
+#
+# To enable Alertmanager or node-exporter in a larger environment, change the
+# corresponding `enabled` flag below and redeploy.
+
+# ── Prometheus Operator ─────────────────────────────────────────────────────
+prometheusOperator:
+  admissionWebhooks:
+    enabled: true
+
+# ── Prometheus ───────────────────────────────────────────────────────────────
+prometheus:
+  prometheusSpec:
+    # Discover ServiceMonitors/PodMonitors/PrometheusRules from ALL namespaces.
+    # Without these settings the operator only discovers resources from the
+    # same namespace as the Prometheus instance.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    serviceMonitorSelector: {}
+    podMonitorSelector: {}
+    ruleSelector: {}
+
+    retention: 72h
+    retentionSize: ""
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+# ── Grafana ──────────────────────────────────────────────────────────────────
+grafana:
+  enabled: true
+
+  # The sidecar discovers ConfigMaps labelled grafana_dashboard: "1"
+  # from ALL namespaces (the portal-dos-links dashboard lives there).
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: ALL
+      label: grafana_dashboard
+      labelValue: "1"
+    datasources:
+      enabled: true
+
+  # Grafana is NOT exposed via Ingress — access via kubectl port-forward only.
+  ingress:
+    enabled: false
+
+  # Tempo datasource — provisioned automatically.
+  # The Service name is "tempo" because the Helm release name is "tempo"
+  # and the chart name "tempo" is a substring of the release name.
+  additionalDataSources:
+    - name: Tempo
+      type: tempo
+      uid: tempo
+      url: http://tempo.observability.svc.cluster.local:3200
+      access: proxy
+      isDefault: false
+      jsonData:
+        tracesToLogsV2:
+          datasourceUid: ""
+        serviceMap:
+          datasourceUid: prometheus
+        nodeGraph:
+          enabled: true
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  
+  livenessProbe:
+    initialDelaySeconds: 300
+
+# ── Alertmanager ─────────────────────────────────────────────────────────────
+# Disabled for local/hackathon clusters. Set enabled: true to activate.
+alertmanager:
+  enabled: false
+
+# ── node-exporter ────────────────────────────────────────────────────────────
+# Disabled for local/hackathon clusters. Set enabled: true to activate.
+nodeExporter:
+  enabled: false
+prometheus-node-exporter:
+  enabled: false
+
+# ── kube-state-metrics ───────────────────────────────────────────────────────
+# Required for dashboard panels that show pod/deployment readiness.
+kubeStateMetrics:
+  enabled: true
+
+# ── kube-* scrapers ──────────────────────────────────────────────────────────
+# Disable scrapers that require node-level or cloud-provider access
+# (not needed for the portal dashboard).
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+
+# ── Default dashboards ───────────────────────────────────────────────────────
+defaultRules:
+  create: true
+  rules:
+    alertmanager: false       # no Alertmanager
+    nodeExporterAlerting: false
+    nodeExporterRecording: false

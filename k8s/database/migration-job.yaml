@@ -1,0 +1,30 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: prisma-migrate
+  namespace: portal-dos-links
+  annotations:
+    # Sync hook (not PreSync): PreSync runs before Postgres exists on a fresh install.
+    # Wave 1 = after wave 0 (Postgres, PVC, Service) is Healthy, before wave 2 (API).
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "1"
+    # A failed Job stays for inspection; the next sync replaces it.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  # Generous retry budget: on a fresh install Postgres may still be
+  # accepting connections a few seconds after it reports Ready.
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: prisma-migrate
+          # Must resolve to the same tag as the API Deployment (see kustomization images:).
+          image: ghcr.io/cloudops-squad-2/portal-dos-links-api
+          # Same command the old initContainer used (known to work in this image).
+          # If you later switch to a Prisma config file, verify the filename first:
+          #   kubectl exec deploy/portal-api -n portal-dos-links -- ls -la . prisma
+          command: ["sh", "-c", "npx prisma migrate deploy --schema=prisma/schema.prisma"]
+          envFrom:
+            - secretRef:
+                name: api-secret

@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: portal-frontend-pdb
+  namespace: portal-dos-links
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: portal-frontend

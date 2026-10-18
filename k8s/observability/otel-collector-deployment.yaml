@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: portal-dos-links
+  labels:
+    app: otel-collector
+spec:
+  # replicas: managed by HPA — do not set here.
+  selector:
+    matchLabels:
+      app: otel-collector
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+      annotations:
+        # Restart pods when the config ConfigMap changes.
+        checksum/config: "will-be-recomputed-by-kustomize-on-change"
+    spec:
+      # Spread replicas across nodes for availability.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: otel-collector
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+
+      containers:
+        - name: otel-collector
+          # Pinned: otel/opentelemetry-collector-contrib 0.163.1
+          # Check https://github.com/open-telemetry/opentelemetry-collector-releases/releases
+          # before upgrading — verify the memory_limiter and prometheus exporter config
+          # compatibility with the new version.
+          image: otel/opentelemetry-collector-contrib:0.163.1
+          args:
+            - "--config=/etc/otel/otel-collector-config.yaml"
+
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
+            - name: otlp-http
+              containerPort: 4318
+              protocol: TCP
+            - name: prom-metrics
+              containerPort: 8889
+              protocol: TCP
+            - name: self-metrics
+              containerPort: 8888
+              protocol: TCP
+            - name: health
+              containerPort: 13133
+              protocol: TCP
+
+          # Probes use the health_check extension (port 13133).
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: 100m
+              # Must be lower than the memory_limiter limit_percentage × limits.memory.
+              # 512Mi limit × 80% = ~410Mi soft limit; 512Mi × 100% = 512Mi hard (OOM).
+              # Request set lower to allow burstable QoS.
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          volumeMounts:
+            - name: otel-config
+              mountPath: /etc/otel/
+              readOnly: true
+            # The collector writes nothing outside /etc/otel at runtime,
+            # but some contrib components need a /tmp dir.
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: otel-config
+          configMap:
+            name: otel-collector-config
+        - name: tmp
+          emptyDir: {}
