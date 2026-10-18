@@ -141,8 +141,11 @@ Four separate Ingress objects, one per concern. The rewrite annotation in `ingre
 - **R9.4** ⏳ Cluster MUST have `metrics-server` installed (documented as prerequisite) for HPA to function
 - **R9.5** ⏳ WHEN a rolling update is triggered, THE SYSTEM SHALL serve zero downtime (`maxUnavailable: 0`, `maxSurge: 1`, readiness gate via `GET /api/ready`)
 
-### R10 — Migrações de Banco ⏳
+### R10 — Migrações de Banco ✅ DONE
 
-- **R10.1** ⏳ WHEN a new version is deployed, THE SYSTEM SHALL run `prisma migrate deploy` exactly once per deploy (not once per new replica), using a Kubernetes `Job` with an ArgoCD `PreSync` hook
-- **R10.2** ⏳ The migration Job MUST use the correct Prisma 7 config flag; the exact command MUST be validated against `kubectl logs` of the Job (do not assume the config filename)
-- **R10.3** ⏳ The `initContainer` approach currently in the API Deployment MUST be removed once the Job is in place
+- **R10.1** ✅ `prisma migrate deploy` runs exactly once per deploy via a Kubernetes `Job` with ArgoCD `Sync` hook at wave 1 — after Postgres (wave 0) is Healthy, before the API (wave 2) starts
+- **R10.2** ✅ Hook is `Sync` (not `PreSync`) — PreSync was rejected because it runs before Postgres exists on a fresh install
+- **R10.3** ✅ Delete policy is `BeforeHookCreation` — failed Job stays for inspection and is replaced on next sync
+- **R10.4** ✅ `initContainer` removed from API Deployment — migration is solely the Job's responsibility
+- **R10.5** ✅ Command validated against running cluster: `npx prisma migrate deploy --schema=prisma/schema.prisma`
+- **R10.6** ✅ `DATABASE_URL` injected via `envFrom: secretRef: api-secret`

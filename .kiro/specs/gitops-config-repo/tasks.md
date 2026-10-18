@@ -138,23 +138,37 @@
 
 1. Create a GitHub PAT with `contents: write` scope on this repo
 2. Add it as `CONFIG_REPO_PAT` secret in the application repo
-3. Add `yq` install step to the application repo's `update-manifests` job
-4. Verify `develop` branch protection allows the bot push
-5. Trigger a test push and confirm the tag bump lands on `develop` here
+3. Add `yq` install step to the application repo's `update-manifests` job:
+   ```yaml
+   - name: Install yq
+     run: |
+       curl -fsSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+         -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+   ```
+4. Verify `develop` branch protection allows the bot push (or configure job to open a PR instead)
+5. Trigger a test push on the application repo and confirm the tag bump lands on `develop` here
 
-**Acceptance:** pushing to `develop` on the application repo automatically updates `newTag` in `k8s/kustomization.yaml` here.
+**Acceptance:** pushing to `develop` on the application repo automatically updates `newTag` in `k8s/kustomization.yaml` here, ArgoCD detects the diff and deploys the new image.
 
 ---
 
-### Task 10 — README ⚠️ DONE — observability section outdated
+### Task 10 — README ✅ DONE
 
-`README.md` exists. Section says "Coming soon" for observability. Will be updated in T11.
-
----
-
-### Task 11 — CI Pipeline Hardening ⏳ TODO (superseded by T10)
-
-Merged into T10 scope. See T10.
+`README.md` fully rewritten. Covers:
+- Project identity, repo structure (all files, alphabetical, with comments)
+- Prerequisites table (kubectl, kustomize, helm, argocd CLI, metrics-server, GHCR access)
+- Bootstrap guide (correct order: ingress-nginx → metrics-server → ArgoCD → namespaces → secrets → observability stack → portal app)
+- Wave table explaining sync order
+- Port map and port-forward commands for all services
+- Testing guide (curl commands + UI test)
+- Day-to-day operations (deploy new version, force refresh, routine checks)
+- Secret reference with `DATABASE_URL` key, URL-encoding note, `secret.example.yaml` copy instructions
+- Ingress layout table with rewrite rationale
+- Observability architecture diagram and component table
+- CI pipeline section with `CONFIG_REPO_PAT` setup steps
+- Minikube first-time cheatsheet
+- Troubleshooting — 6 sections covering ArgoCD, pods, networking, database/migrations, observability, misc
+- Kiro usage log
 
 ---
 
@@ -384,40 +398,32 @@ Annotations: `limit-rps: "100"`, `proxy-body-size: "1m"`
 
 ---
 
-### T8 — Migrações (G7, D7) ⚠️ DONE — Prisma config filename must be verified at runtime
+### Task 8 — Migrações (G7, D7) ✅ DONE — Sync hook wave 1, Prisma config verified at runtime
 
-**Files:** `k8s/database/migration-job.yaml` (new), `k8s/api/deployment.yaml` (remove initContainer), `k8s/database/kustomization.yaml`
+**Files:** `k8s/database/migration-job.yaml`, `k8s/api/deployment.yaml` (initContainer removed), `k8s/database/kustomization.yaml`
 
-Create `migration-job.yaml`:
-```yaml
-# ArgoCD PreSync hook — runs once per deploy, before Deployment pods update
-apiVersion: batch/v1
-kind: Job
-metadata:
-  annotations:
-    argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
-```
+**Actual implementation (differs from original spec):**
 
-Job spec:
-- Same image as API (Kustomize image override applies)
-- `backoffLimit: 3`
-- `ttlSecondsAfterFinished: 600`
-- Command: `["npx", "prisma", "migrate", "deploy", "--config", "prisma7.config.ts"]`
-  - **Verification required:** inspect `kubectl logs job/prisma-migrate -n portal-dos-links` to confirm the config filename is correct for the app repo's Prisma version
-- `envFrom: secretRef: api-secret` (needs DATABASE_URL)
+The Job uses `argocd.argoproj.io/hook: Sync` with `sync-wave: "1"` — **not PreSync**. PreSync was rejected because it runs before Postgres exists on a fresh install, causing connection failures. Wave 1 guarantees Postgres (wave 0) is Healthy before the migration runs.
 
-Remove `initContainer` block from `k8s/api/deployment.yaml`.
+| Field | Value |
+|---|---|
+| Hook | `Sync` (not PreSync) |
+| Wave | `1` (after Postgres wave 0, before API wave 2) |
+| Delete policy | `BeforeHookCreation` (failed Job stays for inspection; replaced on next sync) |
+| backoffLimit | `6` (generous — Postgres may still be warming up after Ready) |
+| Command | `["sh", "-c", "npx prisma migrate deploy --schema=prisma/schema.prisma"]` |
+| Env | `envFrom: secretRef: api-secret` (needs DATABASE_URL) |
 
-**What cannot be verified without a running cluster:**
-- Correct Prisma 7 config filename (`prisma7.config.ts` vs `prisma.config.ts`)
-- Whether `migrate deploy` succeeds on a blank database
+**initContainer removed** from `k8s/api/deployment.yaml`. Comment added explaining the migration is now handled by the Job.
 
-**Acceptance criteria:**
+**Validated:** `prisma-migrate` Job shows `Completed` in cluster; `public.Link` table confirmed created.
+
+**Acceptance criteria:** ✅
 - `kustomize build k8s/` + `kubeconform -strict` pass
-- On a blank database: tables created after one sync (confirmed via `kubectl logs job/...`)
-- No Prisma config error in Job logs
-- `initContainer` no longer present in API Deployment
+- `kubectl get jobs -n portal-dos-links` shows `prisma-migrate` Completed
+- API pods reach `1/1 Running` after Job completes
+- No `initContainer` in API Deployment
 
 ---
 
