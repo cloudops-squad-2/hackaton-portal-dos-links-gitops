@@ -28,7 +28,7 @@ spec:
         valueFiles:
           - $values/argocd/observability/kube-prometheus-stack-values.yaml
     - repoURL: https://github.com/cloudops-squad-2/hackaton-portal-dos-links-gitops.git
-      targetRevision: develop
+      targetRevision: main
       ref: values
   destination:
     server: https://kubernetes.default.svc
