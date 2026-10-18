@@ -23,8 +23,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: portal.localdev
-      http:
+    - http:
         paths:
           - path: /s/(.*)
             # ImplementationSpecific is required for regex paths with ingress-nginx.

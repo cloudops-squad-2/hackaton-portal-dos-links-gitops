@@ -15,8 +15,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: portal.localdev
-      http:
+    - http:
         paths:
           - path: /otlp
             pathType: Prefix
