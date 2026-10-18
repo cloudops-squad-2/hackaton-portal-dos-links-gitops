@@ -134,58 +134,59 @@ git show origin/develop:k8s/api/hpa.yaml | grep -n sync-wave
 You should see `argocd.argoproj.io/sync-wave: "3"`. If nothing prints, merge the fix into `develop` first.
 
 ### Step 1 — Start a cluster (local only)
-
+ 
 Skip this if you already have a cluster.
-
+ 
 ```bash
 minikube start --driver=docker --cpus=4 --memory=6144
 kubectl get nodes          # should show Ready
 ```
-
-### Step 2 — Install ingress-nginx
-
-**Minikube:** use the addon. The `provider/cloud` manifest leaves Ingresses without an address on minikube.
-
-```bash
-minikube addons enable ingress
-kubectl wait -n ingress-nginx --for=condition=ready pod \
-  --selector=app.kubernetes.io/component=controller --timeout=180s
-kubectl get svc -n ingress-nginx ingress-nginx-controller   # TYPE should be NodePort
-```
-
-**Cloud / remote cluster:**
-
-```bash
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
-kubectl wait --namespace ingress-nginx \
-  --for=condition=ready pod \
-  --selector=app.kubernetes.io/component=controller \
-  --timeout=120s
-```
-
-### Step 3 — Install metrics-server
-
+ 
+> Do **not** run `minikube addons enable ingress`. The ingress controller is
+> managed by ArgoCD in Step 4 and the addon would conflict with it.
+ 
+### Step 2 — Install metrics-server
+ 
 ```bash
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 ```
-
+ 
 **kind / minikube only** (self-signed kubelet TLS), add `--kubelet-insecure-tls`:
-
+ 
 ```bash
 kubectl patch deploy metrics-server -n kube-system --type=json \
   -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
 ```
-
-### Step 4 — Install ArgoCD
-
+ 
+### Step 3 — Install ArgoCD
+ 
 ```bash
 kubectl create namespace argocd
 kubectl apply -n argocd --server-side --force-conflicts \
   -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 kubectl wait --for=condition=Ready pods --all -n argocd --timeout=300s
 ```
-
+ 
 `--server-side` avoids the "annotation too long" error on ArgoCD's large CRDs.
+ 
+### Step 4 — Install ingress-nginx (managed by ArgoCD)
+ 
+The controller is defined in `argocd/ingress-nginx-app.yaml` as a **NodePort**
+Service that publishes the node IP on the Ingresses. This is required on
+minikube/kind: a `LoadBalancer` Service stays `<pending>` there, the Ingresses
+never get an address, and ArgoCD waits on them forever.
+ 
+```bash
+kubectl apply -f argocd/ingress-nginx-app.yaml
+kubectl get application ingress-nginx -n argocd -w     # wait for Synced + Healthy, then Ctrl+C
+kubectl get svc -n ingress-nginx ingress-nginx-controller   # TYPE should be NodePort
+```
+ 
+> Apply this **before** the observability and portal Applications. Sync waves
+> between Applications are not honored when you `kubectl apply` them one by one,
+> so the order is up to you.
+ 
+---
 
 ### Step 5 — Create namespaces
 
@@ -238,10 +239,16 @@ Inside the portal Application, resources sync in waves. This can take a few minu
 
 | Wave | Resources |
 |---|---|
-| 0 | postgres, frontend, OTel Collector |
-| 1 | `prisma-migrate` Job (Sync hook — runs after wave 0 is Healthy, before wave 2) |
-| 2 | API |
+| 0 | postgres, frontend, OTel Collector, **Ingresses** (must have an `ADDRESS` before wave 1 starts) |
+| 1 | `prisma-migrate` Job (Sync hook, runs after wave 0 is Healthy, before wave 2) |
+| 2 | API Deployment, API PDB |
 | 3 | API HPA |
+ 
+> An Ingress only counts as Healthy once it has an address. If the ingress
+> controller is wrong, ArgoCD silently waits here and the migration Job and the
+> API never start.
+ 
+---
 
 ### Step 9 — Verify
 
@@ -265,8 +272,25 @@ otel-collector-xxx                 1/1     Running   0
 otel-collector-xxx                 1/1     Running   0
 ```
 
----
+### Step 10 — Access the portal
 
+```bash
+kubectl port-forward svc/ingress-nginx-controller -n ingress-nginx 8081:80
+```
+
+Open http://localhost:8081. Always forward the **ingress controller**, never
+`svc/portal-frontend-svc`: the frontend Service has no `/api` route, so
+`POST /api/links` returns 405.
+
+Test:
+
+```bash
+curl -i -X POST http://localhost:8081/api/links \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com"}'          # expect 201 Created
+```
+
+---
 ## Accessing the Cluster
 
 ### Port map
@@ -528,7 +552,7 @@ Once set up, pushing to `develop` on the application repo triggers the full loop
 | `503` on `/api`, no `portal-api` pods | Sync stuck or failed before the API wave | [Find why the sync is stuck](#find-why-a-sync-is-stuck) |
 | `Empty reply from server` | Stale port-forward holding the port | `ss -ltnp \| grep <port>`, kill it, restart |
 | `404` from nginx on localhost | Ingress has a `host:` restriction | Check that `kubectl get ingress` shows HOSTS `*` |
-| Ingress `ADDRESS` empty, ArgoCD waits on Ingresses | Controller is a `LoadBalancer` stuck on `<pending>` (cloud manifest on minikube) | Use `minikube addons enable ingress` |
+| Ingress `ADDRESS` empty, ArgoCD waits on Ingresses | Controller is a `LoadBalancer` stuck on `<pending>` | Deploy from `argocd/ingress-nginx-app.yaml` (NodePort); see [Sync stuck: waiting for healthy state](#sync-stuck-waiting-for-healthy-state-of-ingress-and-3-more-resources) |
 | Sync `Failed`, HPA says "target not found" | HPA is in wave 0 but the Deployment is wave 2 | Give `k8s/api/hpa.yaml` the annotation `argocd.argoproj.io/sync-wave: "3"`, merge into `develop`, refresh |
 | Live HPA has no `sync-wave` annotation | ArgoCD is syncing a revision without the fix | Confirm the fix is on `develop`, then refresh and sync |
 | Change in Git has no effect | ArgoCD tracks `develop` | Merge into `develop`, then refresh |
@@ -547,7 +571,53 @@ git log --oneline -5        # confirm you're on the right branch
 git push origin develop
 ```
 
-#### Find why a sync is stuck
+#### Sync stuck: `waiting for healthy state of Ingress/... and 3 more resources`
+
+The Ingresses have no `ADDRESS` — usually because the ingress controller is a `LoadBalancer` stuck on `<pending>`.
+
+```bash
+kubectl get ingress -n portal-dos-links                      # ADDRESS empty?
+kubectl get svc -n ingress-nginx ingress-nginx-controller    # TYPE must be NodePort
+```
+
+Make sure the controller was deployed from `argocd/ingress-nginx-app.yaml` (NodePort + `reportNodeInternalIp: true`). Neither the `provider/cloud` manifest nor `minikube addons enable ingress` should be active alongside it — they conflict.
+
+If the controller is already running but TYPE is `LoadBalancer`, delete and redeploy:
+
+```bash
+kubectl delete namespace ingress-nginx
+kubectl apply -f argocd/ingress-nginx-app.yaml
+kubectl get application -n argocd ingress-nginx -w   # wait for Healthy
+```
+
+Then refresh and restart the portal sync:
+
+```bash
+kubectl annotate application portal-dos-links -n argocd argocd.argoproj.io/refresh=hard --overwrite
+kubectl patch application portal-dos-links -n argocd --type merge -p '{"operation":{"sync":{"prune":true}}}'
+```
+
+---
+
+#### Sync `Failed`: HPA says `deployments.apps "portal-api" not found`
+
+The HPA was applied before the API Deployment. `k8s/api/hpa.yaml` must carry `argocd.argoproj.io/sync-wave: "3"` and the Deployment must be wave `"2"`. Check what's live:
+
+```bash
+kubectl get hpa portal-api-hpa -n portal-dos-links \
+  -o jsonpath='{.metadata.annotations}{"\n"}'   # must include sync-wave "3"
+```
+
+If the annotation is missing, the fix is not on `develop` yet. Merge it, then refresh and restart the sync:
+
+```bash
+kubectl annotate application portal-dos-links -n argocd argocd.argoproj.io/refresh=hard --overwrite
+kubectl patch application portal-dos-links -n argocd --type merge -p '{"operation":{"sync":{"prune":true}}}'
+```
+
+---
+
+
 
 ```bash
 kubectl get application portal-dos-links -n argocd \
