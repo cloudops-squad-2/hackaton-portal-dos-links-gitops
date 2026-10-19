@@ -508,3 +508,72 @@ Uncomment `- observability` in `k8s/kustomization.yaml` **only after T3–T9 are
 - All pods (API, Frontend, Database, Collector) `1/1 Running`, 0 restarts
 - Prometheus scrapes Collector metrics (ServiceMonitor active)
 - Grafana dashboard loads without "No data" panels (with traffic)
+
+---
+
+### T13 — Dashboard de Demo (cliques, latência, erros, traces) ⏳ IN PROGRESS
+
+**Files:** `k8s/observability/grafana-dashboard-configmap.yaml`, `.kiro/specs/gitops-config-repo/{requirements,design,tasks}.md`
+
+Objetivo: deixar o dashboard `portal-dos-links` (uid fixo) pronto para a demo ao vivo do hackathon, mostrando cliques, latência, erros e traces na mesma tela. Mantém os 8 painéis existentes inalterados e adiciona 2 novos, totalizando 10.
+
+**Spec changes (feito antes da implementação, Spec Driven Development):**
+- `requirements.md`: adicionados R4.4.6 a R4.4.10
+- `design.md`: adicionada ADR D10 (Dashboard de Demo)
+- `tasks.md`: adicionada T13 (esta task)
+
+**Implementação:**
+
+1. Adicionar painel **"Total de cliques"** (novo `id: 9`):
+   - `type: stat`, datasource `{ "type": "prometheus", "uid": "${datasource}" }`
+   - `expr: sum(increase(links_redirected_total[$__range]))` — total acumulado na janela selecionada
+   - Posicionado em destaque no início da primeira linha (gridPos x=0, y=0)
+   - `options`: `reduceOptions.calcs: ["lastNotNull"]`, `colorMode: "background"`, thresholds verde→amarelo→vermelho invertidos (maior = melhor para cliques)
+
+2. Adicionar painel **"Traces recentes da API"** (novo `id: 10`):
+   - `type: table`, datasource `{ "type": "tempo", "uid": "tempo" }` (uid fixo, NÃO usa `${datasource}`)
+   - target: `{ "queryType": "traceql", "query": "{ resource.service.name = \"portal-dos-links-api\" }", "limit": 20, "refId": "A" }`
+   - Posicionado na linha 3, largura total (gridPos w=24, h=8)
+   - Trace ID clicável por padrão (integração Table + TraceQL do Grafana; não requer data links)
+
+3. Reorganizar o `gridPos` dos 10 painéis sem sobreposição, layout de cima para baixo:
+   - Linha 1 (y=0): Total de cliques (x=0,w=8) + Redirects por segundo (x=8,w=8) + Links criados por segundo (x=16,w=8)
+   - Linha 2 (y=8): Latência p50/p95/p99 (x=0,w=8) + Erros de negócio (x=8,w=8) + Taxa de 5xx (x=16,w=8)
+   - Linha 3 (y=16): Traces recentes da API (x=0,w=24,h=8)
+   - Linha 4 (y=24): Pods prontos (x=0,w=8) + HPA (x=8,w=8) + Falhas de envio do Collector (x=16,w=8)
+
+4. Configurar `refresh: "5s"` e `time: { "from": "now-15m", "to": "now" }` para a demo ao vivo
+
+5. Manter `uid: "portal-dos-links"`, não alterar títulos/queries/datasource dos 8 painéis existentes (apenas `gridPos` é ajustado)
+
+**Restrições:**
+- JSON válido dentro do ConfigMap (bloco literal `|`, aspas duplas escapadas como `\"`, indentação YAML correta)
+- Não alterar o label do ConfigMap nem o namespace
+- Não quebrar o kustomize
+
+**Verificação (executar e confirmar):**
+1. `kubectl kustomize k8s/` (ou `kustomize build k8s/`) renderiza sem erro
+2. Extrair o JSON do ConfigMap renderizado e validar com `python -m json.tool` (ou `jq .`)
+3. Confirmar 10 painéis no array `panels`
+4. Confirmar `uid: "portal-dos-links"` inalterado
+5. Confirmar que o painel de traces usa `uid: "tempo"` (não `${datasource}`)
+
+**Suposições a conferir no cluster (NÃO alterar — só listar para o user validar):**
+- Label `http_route="/:code"` nas métricas `http_server_request_duration_seconds_*` (usado no painel 4 de latência)
+- Label `http_response_status_code` (usado no painel 5 de taxa de 5xx)
+- Label `service_name` (usado no painel 5 de taxa de 5xx)
+- Comando para conferir:
+  ```bash
+  kubectl exec -n portal-dos-links deploy/otel-collector -- \
+    wget -qO- http://localhost:8889/metrics | grep -E 'http_server_request_duration_seconds|links_'
+  ```
+  (alternativa localhost se port-forward ativo: `curl -s http://localhost:8889/metrics | grep -E 'http_server_request_duration_seconds|links_'`)
+
+**Acceptance criteria:**
+- `kustomize build k8s/` passa sem erro
+- JSON extraído do ConfigMap é válido (parseável por `python -m json.tool`/`jq`)
+- Dashboard tem 10 painéis (8 existentes + 2 novos) e o mesmo uid `portal-dos-links`
+- Painel de traces usa datasource Tempo (uid `tempo`); os demais continuam em Prometheus (`${datasource}`)
+- `refresh: "5s"` e `time.from: "now-15m"` definidos
+- Nenhum painel com sobreposição de gridPos
+- Nenhuma query existente alterada (diff apenas em gridPos dos 8 painéis + 2 painéis novos + refresh/time)
