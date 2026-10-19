@@ -110,6 +110,17 @@ ArgoCD watches this repo and reconciles the cluster with whatever is on the `dev
 
 ## Bootstrap (First-Time Setup)
 
+### Installation Script
+
+Run in the repo root:
+```bash
+bash install.sh --minikube
+```
+
+The port-forwarding guide is described at the end of the script execution. In case of continuous errors or if the installation process gets stuck, please look into the manual installation below.
+
+### Manual Installation
+
 Run everything from the repo root, **in this order**, to avoid dependency failures:
 
 1. ingress-nginx (all Ingresses depend on it)
