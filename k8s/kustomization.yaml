@@ -8,6 +8,6 @@ resources:
   - observability
 images:
   - name: ghcr.io/cloudops-squad-2/portal-dos-links-api
-    newTag: "8a75147"
+    newTag: "75bdacd"
   - name: ghcr.io/cloudops-squad-2/portal-dos-links-frontend
-    newTag: "8a75147"
+    newTag: "75bdacd"
