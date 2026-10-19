@@ -97,6 +97,11 @@ Each of the three components has a complete set of manifests inside `k8s/<compon
 - **R4.4.3** ⏳ `PrometheusRule` MUST define alerts for: 5xx rate > 2% for 5 min; p99 latency > 500 ms for 10 min; API/Frontend pods not ready; Collector export failures (`otelcol_exporter_send_failed_spans` / `otelcol_processor_refused_*` > 0); HPA at maximum replicas for 15 min
 - **R4.4.4** ⏳ Dashboard datasource MUST be referenced by UID variable, not by the hardcoded string `"Prometheus"`
 - **R4.4.5** ⏳ Root kustomization line `# - observability` MUST remain commented until T3–T9 pass CI validation (T12 uncomments it)
+- **R4.4.6** ⏳ Dashboard MUST include a "Total de cliques" stat panel (Prometheus, `${datasource}`) with `expr: sum(increase(links_redirected_total[$__range]))`, positioned in the first row in prominence, before the per-second rate panels
+- **R4.4.7** ⏳ Dashboard MUST include a "Traces recentes da API" panel using the Tempo datasource (fixed uid `tempo`, NOT the `${datasource}` Prometheus variable), `queryType: traceql`, query `{ resource.service.name = "portal-dos-links-api" }`, `type: table`, limit 20, with the Trace ID clickable and opening the trace in Explore. The Tempo panel uses the Grafana-native Table + TraceQL integration (verified against Grafana docs); no data links or overrides are required for the Trace ID to be clickable.
+- **R4.4.8** ⏳ Dashboard MUST keep the 8 existing panels unchanged (titles, types, queries, datasource), keep the dashboard `uid: portal-dos-links`, and grow to 10 panels total
+- **R4.4.9** ⏳ Dashboard gridPos MUST follow this top-to-bottom layout with NO panel overlap: (a) row 1 — Total de cliques + Redirects por segundo + Links criados por segundo; (b) row 2 — Latência p50/p95/p99 + Erros de negócio + Taxa de 5xx; (c) row 3 — Traces recentes da API at full width; (d) row 4 — Pods prontos + HPA + Falhas de envio do Collector
+- **R4.4.10** ⏳ Dashboard MUST set `refresh: "5s"` and default time window `now-15m`..`now` for the live demo
 
 ### R5 — Ingress / Networking ✅
 

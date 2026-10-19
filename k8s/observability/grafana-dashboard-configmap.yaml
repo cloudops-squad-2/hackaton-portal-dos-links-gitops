@@ -13,9 +13,9 @@ data:
       "uid": "portal-dos-links",
       "title": "Portal dos Links",
       "schemaVersion": 38,
-      "version": 3,
-      "refresh": "30s",
-      "time": { "from": "now-1h", "to": "now" },
+      "version": 4,
+      "refresh": "5s",
+      "time": { "from": "now-15m", "to": "now" },
       "templating": {
         "list": [
           {
@@ -31,11 +31,48 @@ data:
       },
       "panels": [
         {
+          "id": 9,
+          "type": "stat",
+          "title": "Total de cliques",
+          "description": "Total acumulado de redirects na janela selecionada (sum(increase(links_redirected_total[$__range]))). Em destaque para a demo ao vivo — numero imediato de volume para a audiencia.",
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "targets": [
+            {
+              "expr": "sum(increase(links_redirected_total[$__range]))",
+              "legendFormat": "cliques",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 10 },
+                  { "color": "green", "value": 100 }
+                ]
+              },
+              "color": { "mode": "thresholds" }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "orientation": "horizontal",
+            "textMode": "auto",
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "auto"
+          }
+        },
+        {
           "id": 1,
           "type": "timeseries",
           "title": "Redirects por segundo (links.redirected)",
           "description": "Counter links_redirected_total incremented by the API on every successful redirect. Rate window 2m >= 4x the 30s export interval. No /s/ filter needed — the API never sees /s.",
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [
             {
@@ -55,43 +92,13 @@ data:
           "id": 2,
           "type": "timeseries",
           "title": "Links criados por segundo",
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [
             {
               "expr": "sum(rate(links_created_total[2m]))",
-              "legendFormat": "criações/s",
+              "legendFormat": "criacoes/s",
               "refId": "A"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "ops",
-              "color": { "mode": "palette-classic" }
-            }
-          }
-        },
-        {
-          "id": 3,
-          "type": "timeseries",
-          "title": "Erros de negócio (expirados / não encontrados / limite de cliques)",
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "targets": [
-            {
-              "expr": "sum(rate(links_expired_total[2m]))",
-              "legendFormat": "expirados/s",
-              "refId": "A"
-            },
-            {
-              "expr": "sum(rate(links_not_found_total[2m]))",
-              "legendFormat": "não encontrados/s",
-              "refId": "B"
-            },
-            {
-              "expr": "sum(rate(links_click_limit_reached_total[2m]))",
-              "legendFormat": "limite de cliques/s",
-              "refId": "C"
             }
           ],
           "fieldConfig": {
@@ -104,9 +111,9 @@ data:
         {
           "id": 4,
           "type": "timeseries",
-          "title": "Latência HTTP p50 / p95 / p99 (rota /:code)",
+          "title": "Latencia HTTP p50 / p95 / p99 (rota /:code)",
           "description": "Filtered by http_route='/:code' — the route the API registers for redirects. The Ingress strips /s before the request reaches the API, so the route is always /:code, never /s/:code. Metric name assumes OTEL_SEMCONV_STABILITY_OPT_IN=http. Verify from :8889/metrics.",
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [
             {
@@ -133,11 +140,41 @@ data:
           }
         },
         {
+          "id": 3,
+          "type": "timeseries",
+          "title": "Erros de negocio (expirados / nao encontrados / limite de cliques)",
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "targets": [
+            {
+              "expr": "sum(rate(links_expired_total[2m]))",
+              "legendFormat": "expirados/s",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(links_not_found_total[2m]))",
+              "legendFormat": "nao encontrados/s",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(rate(links_click_limit_reached_total[2m]))",
+              "legendFormat": "limite de cliques/s",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
           "id": 5,
           "type": "timeseries",
           "title": "Taxa de erros HTTP 5xx (%) — todas as rotas da API",
           "description": "Ratio of 5xx responses across all API routes. Filtered to service_name=portal-dos-links-api to exclude Collector self-metrics. Metric name assumes OTEL_SEMCONV_STABILITY_OPT_IN=http. Verify http_response_status_code label name from :8889/metrics.",
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [
             {
@@ -162,10 +199,32 @@ data:
           }
         },
         {
+          "id": 10,
+          "type": "table",
+          "title": "Traces recentes da API",
+          "description": "Lista os 20 traces mais recentes do servico portal-dos-links-api via TraceQL no Tempo (uid fixo 'tempo' — nao usa a variavel ${datasource} que e de Prometheus). O Trace ID na tabela e clicavel por padrao na integracao Table + TraceQL do Grafana e abre o trace no Explore.",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "tempo", "uid": "tempo" },
+              "queryType": "traceql",
+              "query": "{ resource.service.name = \"portal-dos-links-api\" }",
+              "limit": 20
+            }
+          ],
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": { "show": false }
+          }
+        },
+        {
           "id": 6,
           "type": "stat",
           "title": "Pods prontos por Deployment",
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [
             {
@@ -208,8 +267,8 @@ data:
         {
           "id": 7,
           "type": "timeseries",
-          "title": "HPA réplicas atuais vs máximo",
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+          "title": "HPA replicas atuais vs maximo",
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [
             {
@@ -219,7 +278,7 @@ data:
             },
             {
               "expr": "kube_horizontalpodautoscaler_spec_max_replicas{namespace=\"portal-dos-links\"}",
-              "legendFormat": "máximo — {{horizontalpodautoscaler}}",
+              "legendFormat": "maximo — {{horizontalpodautoscaler}}",
               "refId": "B"
             }
           ],
@@ -235,7 +294,7 @@ data:
           "type": "timeseries",
           "title": "Falhas de envio do Collector (otelcol_*)",
           "description": "Alert CollectorExportFailures fires when this is > 0. Uses self-telemetry from :8888/metrics.",
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "targets": [
             {

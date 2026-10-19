@@ -1,4 +1,5 @@
-﻿# Design — GitOps Config Repo (Portal dos Links)## Inter-Repository Contract
+﻿# Design — GitOps Config Repo (Portal dos Links)
+## Inter-Repository Contract
 
 This table defines the interface between this GitOps repo and the application repo. Neither side may change these values unilaterally.
 
@@ -374,13 +375,57 @@ npx prisma migrate deploy --config prisma7.config.ts
 **Decision:** `PG_POOL_MAX=10` in ConfigMap `api-config`.
 
 **Pool constraint:** `maxReplicas (6) × PG_POOL_MAX (10) = 60 connections`. PostgreSQL default `max_connections` is 100. Constraint: `60 ≤ 80% × 100 = 80`. ✅ Valid for current scale.
-
 **Scale path (ADR — not implemented now):**
 - **PgBouncer:** connection pooler between API pods and PostgreSQL; allows more app replicas without exhausting DB connections
 - **CloudNativePG / managed PostgreSQL:** for production HA and connection management; the single-replica Deployment + PVC is a known limitation (documented in G9)
 
 ---
 
+### D10 — Dashboard de Demo: cliques, latência, erros e traces na mesma tela
+
+**Decision:** O dashboard `portal-dos-links` (uid `portal-dos-links`) evolui de 8 para 10 painéis para a demo ao vivo do hackathon, mantendo o uid e os 8 painéis existentes inalterados. Os 2 novos painéis são:
+
+1. **Total de cliques** — `type: stat`, datasource Prometheus via `${datasource}`, `expr: sum(increase(links_redirected_total[$__range]))`. Usa `$__range` (janela selecionada no dashboard) em vez de `[2m]` fixo, porque é um total acumulado e não uma taxa. Posicionado em destaque no início da primeira linha, antes dos painéis de taxa por segundo.
+
+2. **Traces recentes da API** — `type: table`, datasource **Tempo** (uid fixo `"tempo"`, **não** a variável `${datasource}` que é Prometheus), `queryType: traceql`, query `{ resource.service.name = "portal-dos-links-api" }`, `limit: 20`. O Trace ID é clicável por padrão nesta integração Table + TraceQL do Grafana e abre o trace no Explore — não requer data links ou overrides adicionais.
+
+**Layout do grid (sem sobreposição):**
+
+| Linha | Painéis (gridPos) |
+|---|---|
+| 1 — destaque de volume | Total de cliques + Redirects por segundo + Links criados por segundo |
+| 2 — latência e erros | Latência p50/p95/p99 + Erros de negócio + Taxa de 5xx |
+| 3 — traces | Traces recentes da API (largura total, 24 colunas) |
+| 4 — saúde do cluster | Pods prontos + HPA + Falhas de envio do Collector |
+
+Cada painel ocupa 8 colunas (de 24) na sua linha, exceto a linha 3 (Traces) que ocupa 24. Altura padrão de 8 unidades para os painéis timeseries/stat; o painel de traces usa altura 8.
+
+**Refresh e janela:** `refresh: "5s"` e `time: { from: "now-15m", to: "now" }` para a demo ao vivo. O refresh de 5s é agressivo e adequado apenas para demo curta; o valor anterior era `30s`.
+
+**Rationale:**
+- O painel "Total de cliques" em destaque dá um número imediato de volume para a audiência, mais impactante que a taxa/s em uma demo
+- O painel de traces na mesma tela conecta métricas e traces sem trocar de aba — o juiz vê um pico de latência e clica no trace correspondente
+- O Tempo já está provisionado (uid `tempo`, url `http://tempo.observability.svc.cluster.local:3200`) em `argocd/observability/kube-prometheus-stack-values.yaml`; não há provisão adicional necessária
+- A escolha de `type: table` + TraceQL (em vez do visualization `traces` puro) é porque o `traces` renderiza um único trace por traceID, exigindo uma variável `traceId` manual; a tabela lista 20 traces recentes e permite clicar
+
+**Rejected alternative — painel `traces` com variável `traceId`:** exigiria o usuário digitar um trace ID para visualizar; inadequado para demo ao vivo onde queremos ver uma lista de traces recentes.
+
+**Rejected alternative — TraceQL metrics query:** retornaria séries temporais agregadas, não a lista de traces clicável que o objetivo pede.
+
+**Restrições técnicas (não alteradas):**
+- O JSON do dashboard vive dentro de um ConfigMap como bloco literal `|` — aspas duplas escapadas como `\"`, indentação YAML correta
+- O label do ConfigMap (`grafana_dashboard: "1"`) e o namespace (`portal-dos-links`) não mudam
+- O kustomize deve continuar renderizando sem erro
+
+**Verificação assumida (não alterada, só confirmada no cluster):**
+- Label `http_route="/:code"` nas métricas `http_server_request_duration_seconds_*` (filtro de latência)
+- Label `http_response_status_code` (filtro de 5xx)
+- Label `service_name` (filtro de service na taxa de 5xx)
+- Comando de verificação no Collector: `kubectl exec -n portal-dos-links deploy/otel-collector -- wget -qO- http://localhost:8889/metrics | grep -E 'http_server_request_duration_seconds|links_'`
+
+---
+
+## ArgoCD Application
 ## ArgoCD Application
 
 ### Portal dos Links (current + updates for T3)
